@@ -82,7 +82,10 @@ impl PtyChild {
     }
 
     fn drain_until_started(&mut self) {
-        self.drain_until(b"bree");
+        // The desktop wordmark is drawn with block cells rather than literal text.
+        // Wait for a stable home entry, which is also present before sampling finishes.
+        // Ratatui can encode intervening blank cells as cursor movements.
+        self.drain_until(b"Clean");
     }
 
     fn drain_until(&mut self, marker: &[u8]) {

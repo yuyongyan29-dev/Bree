@@ -24,7 +24,7 @@ impl NativeBackend {
     }
     fn main_thread() -> Result<(), String> {
         if unsafe { libc::pthread_main_np() } == 0 {
-            return Err("原生控制对象只允许在主线程使用".into());
+            return Err("Native control objects may only be used on the main thread".into());
         }
         Ok(())
     }
@@ -34,10 +34,10 @@ impl NativeBackend {
         identity: &ProcessIdentity,
     ) -> Result<(), String> {
         if app.isTerminated() || app.processIdentifier() != identity.pid as i32 {
-            return Err("冻结应用已退出或实例不匹配".into());
+            return Err("The frozen app exited or its instance does not match".into());
         }
         if app.activationPolicy() != NSApplicationActivationPolicy::Regular {
-            return Err("对象不是普通前台可见 Mac 应用".into());
+            return Err("The object is not an ordinary user-visible Mac app".into());
         }
         if app.bundleIdentifier().map(|s| s.to_string()).as_deref() != Some(&scope.bundle_id)
             || app
@@ -53,7 +53,7 @@ impl NativeBackend {
                 .as_deref()
                 != Some(&scope.executable_path)
         {
-            return Err("冻结应用的安装范围不匹配".into());
+            return Err("The frozen app installation scope does not match".into());
         }
         Ok(())
     }
@@ -66,12 +66,12 @@ impl NativeBackend {
             .processes
             .iter()
             .find(|p| p.identity == *identity)
-            .ok_or("旧实例已退出、开始标记变化或不可读")?;
+            .ok_or("The old instance exited, its start identity changed, or it is unreadable")?;
         if process.uid != Some(unsafe { libc::geteuid() })
             || process.executable_path.as_deref() != Some(&scope.executable_path)
             || process.id != identity.object_id()
         {
-            return Err("执行用户、路径或实例不匹配".into());
+            return Err("The execution user, path, or instance does not match".into());
         }
         Ok(())
     }
@@ -97,7 +97,7 @@ impl Backend for NativeBackend {
         // PID lookup occurs only during freeze, between two complete identity checks.
         let app =
             NSRunningApplication::runningApplicationWithProcessIdentifier(identity.pid as i32)
-                .ok_or("没有可靠的应用实例")?;
+                .ok_or("No reliable app instance")?;
         Self::check_application(&app, scope, identity)?;
         Self::check_process(&self.collector.snapshot()?, identity, scope)?;
         let index = self.handles.len();
@@ -127,20 +127,25 @@ impl Backend for NativeBackend {
         }
         crate::collect::pump_platform_events();
         let current = self.collector.snapshot()?;
-        let target = self.handles.get(handle).ok_or("冻结控制对象不存在")?;
+        let target = self
+            .handles
+            .get(handle)
+            .ok_or("The frozen control object does not exist")?;
         if target.identity != *identity || target.scope != *scope {
-            return Err("冻结控制对象不匹配，不重新绑定 PID".into());
+            return Err("The frozen control object does not match; the PID is not rebound".into());
         }
         Self::check_process(&current, identity, scope)?;
         Self::check_application(&target.app, scope, identity)?;
         let front = NSWorkspace::sharedWorkspace()
             .frontmostApplication()
-            .ok_or("前台状态不可读取，跳过请求")?;
+            .ok_or("Foreground status is unreadable; request skipped")?;
         if front == target.app || target.app.isActive() {
-            return Err("请求前目标位于前台，保护跳过".into());
+            return Err(
+                "The target is in the foreground before the request; skipped for protection".into(),
+            );
         }
         if cancelled.load(Ordering::Acquire) {
-            return Err("正常退出递送前已取消".into());
+            return Err("Cancelled before normal termination delivery".into());
         }
         // The receiver is the frozen retained instance. No PID lookup or signal fallback.
         Ok(target.app.terminate())
@@ -155,10 +160,10 @@ impl Backend for NativeBackend {
             return Observation::Unknown(error);
         }
         let Some(target) = self.handles.get(handle) else {
-            return Observation::Unknown("原控制对象缺失".into());
+            return Observation::Unknown("The original control object is missing".into());
         };
         if target.identity != *identity || target.scope != *scope {
-            return Observation::Unknown("冻结对象不匹配".into());
+            return Observation::Unknown("The frozen object does not match".into());
         }
         let sample = match self.collector.snapshot() {
             Ok(sample) => sample,
@@ -175,7 +180,7 @@ impl Backend for NativeBackend {
         } else if original_alive && !target.app.isTerminated() {
             Observation::Running
         } else {
-            Observation::Unknown("内核实例与应用退出观察尚未一致；不能声称成功".into())
+            Observation::Unknown("Kernel instance and app exit observations do not yet agree; success cannot be claimed".into())
         }
     }
 }

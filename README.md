@@ -1,10 +1,14 @@
 <p align="center">
-  <img src="assets/bree-brand.png" alt="Bree：橙色睡眠小动物图标与 bree 字标" width="600">
+  <img src="assets/bree-brand.png" alt="Bree: a sleeping mascot on an orange icon and the bree wordmark" width="600">
 </p>
 
 <p align="center">
-  <strong>看清内存占用，让每个选择都有依据。</strong><br>
-  免费的 macOS 终端工具 · 本机查看 · 无需账号或订阅
+  <strong>See where your memory goes. Make informed choices.</strong><br>
+  A free macOS terminal tool · Runs locally · No accounts or subscriptions
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">中文</a>
 </p>
 
 <p align="center">
@@ -14,96 +18,96 @@
 </p>
 
 <p align="center">
-  <a href="#安装">安装</a> ·
-  <a href="#使用">使用</a> ·
-  <a href="docs/cli.md">完整说明</a> ·
-  <a href="https://github.com/yuyongyan29-dev/Bree/issues">反馈问题</a>
+  <a href="#installation">Install</a> ·
+  <a href="#usage">Usage</a> ·
+  <a href="docs/cli.md">User guide</a> ·
+  <a href="https://github.com/yuyongyan29-dev/Bree/issues">Report an issue</a>
 </p>
 
-Bree 把系统内存压力、应用与进程占用放进一个键盘操作的终端界面。查看谁占用了内存，追到每个对象的归属和指标依据，也能用直接命令与 JSON 持续观察。
+Bree brings system memory pressure, application usage, and process details into a terminal interface you can navigate with your keyboard. Find what is using memory, inspect the evidence behind each application's grouping and metrics, or follow changes with direct commands and JSON output.
 
-**当前为 `0.3.0-alpha.1`：已验证 Apple Silicon、macOS 27.0.1，其他系统组合尚待验证。应用正常退出功能未启用，本版本不会结束应用；规则和清理入口提供预演与结果说明。**
+**Current version: `0.3.0-alpha.2`. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. Application quitting is disabled: this version does not stop applications. Rules and cleanup commands provide previews and session summaries.**
 
-## 安装
+## Installation
 
-两种方式均使用预编译程序，**无需安装 Rust、Cargo、Python 或 Node.js**。安装与升级需联网，日常查看在本机完成。
+Both methods install precompiled binaries. **You do not need Rust, Cargo, Python, or Node.js.** Installation and updates require internet access; everyday memory inspection runs locally.
 
 ### Homebrew
 
-已有 Homebrew，安装后直接启动：
+With Homebrew installed, install Bree and start it:
 
 ```sh
 brew install yuyongyan29-dev/tap/bree
 bree
 ```
 
-通过 Bree 的独立 tap 安装预编译 bottle，目前面向 Apple Silicon、macOS 27；其他版本尚未验证。
+Bree's tap provides a precompiled Homebrew bottle for native Apple Silicon on macOS 27. Other macOS versions have not been verified.
 
 ### curl
 
-不需要 Homebrew，使用 macOS 自带工具即可：
+Homebrew is optional. You can install using tools included with macOS:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/yuyongyan29-dev/Bree/main/distribution/install.sh | sh
 ```
 
-默认安装到 `~/.local/bin/bree`。如果这个目录已在 PATH 中，直接运行 `bree`；否则先执行：
+The default location is `~/.local/bin/bree`. If that directory is already in your PATH, run `bree`. Otherwise, run:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
 bree
 ```
 
-将同一行 `export` 加入 `~/.zshrc`，以后新终端也能直接运行。安装器校验 SHA-256 和版本，失败时保留旧程序，不使用 sudo，也不改写 shell 配置。
+Add the same `export` line to `~/.zshrc` to make the command available in new terminal sessions. The installer checks SHA-256 and the binary's version before replacing an existing installation. Failed checks leave the old binary in place. It does not use sudo or modify your shell configuration.
 
-升级、卸载、自定义目录与兼容范围见 [安装说明](docs/installation.md)。当前程序未完成 Developer ID 签名与公证，干净账号安装仍待验证。
+See the [installation guide](docs/installation.md) for updates, uninstalling, custom directories, and compatibility details. This guide is currently in Chinese. Developer ID signing, notarization, and installation under a clean user account remain unverified.
 
-## 能做什么
+## Features
 
-| 你想了解 | Bree 提供 |
+| What you want to know | What Bree shows |
 |---|---|
-| Mac 的内存状况如何？ | 总量、已用量、压缩、交换空间与内存压力 |
-| 哪个应用或进程占用了内存？ | 按有证据的应用归属分组，查看实例、安装位置与指标来源 |
-| 占用是否还在变化？ | 前台持续观察，以及文本、JSON／JSONL 输出 |
-| 某个对象为什么被保留？ | 允许／保护规则、分类理由、只读预演与处理记录 |
+| How is my Mac's memory doing? | Total and used memory, compression, swap, and memory pressure |
+| Which application or process is using memory? | Application groups supported by evidence, process instances, installation paths, and metric sources |
+| Is usage still changing? | Foreground monitoring and text, JSON, or JSONL output |
+| Why is an item protected or skipped? | Allow and protect rules, classification reasons, read-only previews, and session history |
 
-未知或无权限的数据明确标记，不填成零。背景与普通文字继承终端设置，适配浅色、深色和窄窗口，无需额外字体。没有后台常驻或开机启动，也不提供强制结束或后台自动清理。
+Missing or inaccessible data is explicitly marked instead of being reported as zero. Bree inherits your terminal's background and text colors, supports light and dark themes, and adapts to narrow windows without extra fonts. It does not install a background service or launch at login. Force quitting and automatic background cleanup are unavailable.
 
-## 使用
+## Usage
 
 ```sh
-bree                         # 打开终端界面
-bree status                  # 系统内存概览
-bree list --limit 20          # 应用与进程占用
-bree inspect '<对象 ID>'     # 使用 list 返回的 ID 查看详情
-bree watch                   # 前台持续观察
-bree doctor                  # 检查能力与数据可用性
-bree clean --dry-run --json   # 只读预演
-bree history --json           # 处理记录
-bree license                  # 查看 GPL-3.0 许可
+bree                         # Open the terminal interface
+bree status                  # Show system memory
+bree list --limit 20          # List application and process usage
+bree inspect '<object ID>'    # Inspect an ID returned by list
+bree watch                   # Monitor in the foreground
+bree doctor                  # Check capabilities and data availability
+bree clean --dry-run --json   # Preview without taking action
+bree history --json           # Read session history
+bree license                  # Display the GPL-3.0 license
 ```
 
-**↑↓** 选择 · **Enter** 进入 · **R** 刷新 · **Esc** 返回 · **S** 设置 · **Q／Ctrl+C** 退出。最小交互尺寸为 48 列 × 16 行。
+**Up/Down** select · **Enter** open · **R** refresh · **Esc** back · **S** settings · **Q/Ctrl+C** quit. The minimum interactive window size is 48 columns by 16 rows.
 
-需要脚本输出时：
+For scripts:
 
 ```sh
 bree status --json
 bree watch --json --count 3
 ```
 
-JSON 含 `schema_version: 1` 与数据有效性，未知值为 `null`；stdout 只输出结果，诊断写入 stderr。命令选项、规则范围和本地数据说明见 [完整使用说明](docs/cli.md)。
+JSON includes `schema_version: 1` and data validity fields. Unknown values are `null`. Results go to stdout; diagnostics go to stderr. Command options, rule scopes, and local data behavior are covered in the [user guide](docs/cli.md), currently in Chinese.
 
-## 反馈与贡献
+## Feedback and contributions
 
-遇到问题或有建议，欢迎提交 [Issue](https://github.com/yuyongyan29-dev/Bree/issues)。请附 Bree 版本、macOS 版本、架构和复现步骤，分享诊断前检查应用名称与本地路径。
+Found a problem or have a suggestion? [Open an issue](https://github.com/yuyongyan29-dev/Bree/issues) with your Bree version, macOS version, architecture, and steps to reproduce. Check application names and local paths before sharing diagnostics.
 
-构建、检查与 Pull Request 指引见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and verification guidance.
 
 <details>
-<summary>从源码构建</summary>
+<summary>Build from source</summary>
 
-开发环境需要 Rust 1.96.0 与 Xcode 命令行工具，版本由 `rust-toolchain.toml` 和 `Cargo.lock` 固定。
+Development requires Rust 1.96.0 and Xcode Command Line Tools. The Rust toolchain and dependencies are pinned by `rust-toolchain.toml` and `Cargo.lock`.
 
 ```sh
 git clone https://github.com/yuyongyan29-dev/Bree.git
@@ -114,6 +118,6 @@ cargo build --locked --release
 
 </details>
 
-## 许可
+## License
 
-Bree 源码采用 [GPL-3.0](LICENSE)，免费提供，允许商业使用。分发修改版时，须遵守 GPL 并提供对应源码。第三方组件保留各自许可，见 [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt)。
+Bree is available for free under [GPL-3.0](LICENSE). Commercial use is allowed. If you redistribute a modified version, comply with the GPL and provide its corresponding source code. Third-party components retain their own licenses; see [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).

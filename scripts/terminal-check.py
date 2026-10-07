@@ -23,7 +23,7 @@ mutable_flags = os.O_APPEND | os.O_ASYNC | os.O_SYNC | os.O_DSYNC | os.O_NONBLOC
 if args.runs < 20:
     parser.error("at least 20 runs are required")
 
-def session(keys, size=(28, 100), marker="分析中".encode(), timeout=10, expected_exit=0):
+def session(keys, size=(28, 100), marker=b"Analyzing", timeout=10, expected_exit=0):
     master, slave = pty.openpty()
     before = termios.tcgetattr(slave)
     before[3] &= ~termios.PENDIN  # Darwin line-discipline state, not an input-mode setting.
@@ -81,7 +81,7 @@ def session(keys, size=(28, 100), marker="分析中".encode(), timeout=10, expec
 times = [session(b"q")[0] for _ in range(args.runs)]
 result_times = [session(b"q", marker="GiB".encode())[0] for _ in range(args.runs)]
 _, ctrl_c = session(b"\x03", expected_exit=130)
-_, tiny = session(b"q", size=(5, 20), marker="调整".encode())
+_, tiny = session(b"q", size=(5, 20), marker=b"Resize")
 report = {
     "runs": args.runs,
     "skeleton_p95_ms": sorted(times)[max(0, int(len(times) * .95) - 1)],

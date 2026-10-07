@@ -62,7 +62,7 @@ pub enum RuleChange {
 impl PolicyState {
     pub fn validate(&self) -> Result<(), String> {
         if self.schema_version != STATE_SCHEMA_VERSION {
-            return Err("规则文件 schema_version 不受支持；保持只读。".into());
+            return Err("Unsupported rule file schema_version; remaining read-only.".into());
         }
         let mut ids = HashSet::new();
         for rule in &self.rules {
@@ -73,13 +73,16 @@ impl PolicyState {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"-_:".contains(&b))
             {
-                return Err("规则 ID 无效。".into());
+                return Err("Invalid rule ID.".into());
             }
             if !ids.insert(&rule.id) {
-                return Err("规则 ID 重复。".into());
+                return Err("Duplicate rule ID.".into());
             }
             if rule.source != "user" {
-                return Err("当前规则仅接受用户主动设置的 user 来源。".into());
+                return Err(
+                    "Rules currently accept only the user source explicitly set by the user."
+                        .into(),
+                );
             }
             rule.scope.validate()?;
         }
@@ -91,7 +94,7 @@ impl PolicyState {
         let revision = self
             .revision
             .checked_add(1)
-            .ok_or("规则 revision 已溢出；停止写入。")?;
+            .ok_or("Rule revision overflow; writing stopped.")?;
         let mut next = self.clone();
         match change {
             RuleChange::Add { action, scope } => {
@@ -101,11 +104,16 @@ impl PolicyState {
                     .iter()
                     .any(|r| r.action == action && r.scope == scope && r.enabled)
                 {
-                    return Err("此安装范围已有相同的启用规则。".into());
+                    return Err(
+                        "An identical enabled rule already exists for this installation scope."
+                            .into(),
+                    );
                 }
                 let id = format!("rule:{revision}:{now}");
                 if next.rules.iter().any(|r| r.id == id) {
-                    return Err("新规则 ID 与现有规则冲突；停止写入。".into());
+                    return Err(
+                        "The new rule ID conflicts with an existing rule; writing stopped.".into(),
+                    );
                 }
                 next.rules.push(PolicyRule {
                     id,
@@ -121,7 +129,7 @@ impl PolicyState {
                     .rules
                     .iter()
                     .position(|rule| rule.id == id)
-                    .ok_or("要撤销的规则不存在；重新读取规则。")?;
+                    .ok_or("The rule to remove does not exist; reload the rules.")?;
                 next.rules.remove(index);
             }
         }
@@ -140,17 +148,23 @@ impl AppScope {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
         {
-            return Err("bundle ID 必须是确切标识，不能包含通配或控制字符。".into());
+            return Err(
+                "The bundle ID must be exact and contain no wildcards or control characters."
+                    .into(),
+            );
         }
         if !exact_absolute_path(&self.bundle_path)
             || !self.bundle_path.ends_with(".app")
             || !exact_absolute_path(&self.executable_path)
         {
-            return Err("规则必须保存规范绝对 .app 与主可执行路径；不接受通配或相对路径。".into());
+            return Err("Rules require normalized absolute .app and main executable paths; wildcards and relative paths are not accepted.".into());
         }
         let macos = Path::new(&self.bundle_path).join("Contents/MacOS");
         if Path::new(&self.executable_path).parent() != Some(macos.as_path()) {
-            return Err("主可执行文件必须直接位于该安装的 Contents/MacOS。".into());
+            return Err(
+                "The main executable must be directly inside Contents/MacOS of this installation."
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -195,26 +209,32 @@ fn scoped_leader<'a>(
     group_id: &str,
 ) -> Result<(AppScope, &'a ProcessInfo), String> {
     let mut groups = snapshot.groups.iter().filter(|group| group.id == group_id);
-    let group = groups.next().ok_or("对象不属于当前采样；请重新分析。")?;
+    let group = groups
+        .next()
+        .ok_or("The object is not in the current sample; analyze again.")?;
     if groups.next().is_some() || group.process_ids.is_empty() {
-        return Err("组 ID 冲突或组内没有实例。".into());
+        return Err("The group ID conflicts or the group has no instances.".into());
     }
     if group.category != Category::Application {
-        return Err("仅可靠的普通主应用可设置 A1 安装规则；此对象保持只读。".into());
+        return Err("Only reliably identified ordinary main apps can have A1 installation rules; this object remains read-only.".into());
     }
     let mut members = Vec::with_capacity(group.process_ids.len());
     let mut ids = HashSet::new();
     for id in &group.process_ids {
         if !ids.insert(id) {
-            return Err("组内实例重复。".into());
+            return Err("Duplicate instances in the group.".into());
         }
         let mut matches = snapshot
             .processes
             .iter()
             .filter(|process| process.id == *id);
-        let member = matches.next().ok_or("组内实例已缺失。")?;
+        let member = matches
+            .next()
+            .ok_or("An instance in the group is missing.")?;
         if matches.next().is_some() || !reliable_identity(member) {
-            return Err("组内实例身份缺失、过期或冲突。".into());
+            return Err(
+                "An instance identity in the group is missing, stale, or conflicting.".into(),
+            );
         }
         members.push(member);
     }
@@ -227,7 +247,7 @@ fn scoped_leader<'a>(
                 .as_ref()
                 .is_some_and(|app| app.leader_pid == process.identity.pid)
     });
-    let leader = leaders.next().ok_or("没有已核验的 AppKit 主应用。")?;
+    let leader = leaders.next().ok_or("No verified AppKit main app.")?;
     if leaders.next().is_some()
         || snapshot
             .processes
@@ -237,30 +257,33 @@ fn scoped_leader<'a>(
             != 1
         || group.id != format!("app:{}", leader.id)
     {
-        return Err("主应用或当前组实例标记冲突。".into());
+        return Err("The main app or current group instance identity conflicts.".into());
     }
     let app = leader.attribution.application.as_ref().unwrap();
     let scope = AppScope {
-        bundle_id: app.bundle_id.clone().ok_or("主应用 bundle ID 不可读取。")?,
+        bundle_id: app
+            .bundle_id
+            .clone()
+            .ok_or("The main app bundle ID is unreadable.")?,
         bundle_path: app.bundle_path.clone(),
         executable_path: leader
             .executable_path
             .clone()
-            .ok_or("主应用可执行路径不可读取。")?,
+            .ok_or("The main app executable path is unreadable.")?,
     };
     scope.validate()?;
     let contents = Path::new(&scope.bundle_path).join("Contents");
     for member in members {
         if crate::attribution::label_process(member).is_some() {
             return Err(
-                "包含已识别 AI / 开发工具；任务完成、共享与控制契约未验证，保持只读。".into(),
+                "Contains a recognized AI / development tool; task completion, sharing, and the control contract are unverified, so it remains read-only.".into(),
             );
         }
         let member_app = member
             .attribution
             .application
             .as_ref()
-            .ok_or("组内归属缺失。")?;
+            .ok_or("Attribution is missing within the group.")?;
         if member.category != Category::Application
             || member_app.leader_pid != app.leader_pid
             || member_app.bundle_id != app.bundle_id
@@ -274,7 +297,7 @@ fn scoped_leader<'a>(
                 && (member.attribution.method != "same_bundle_executable"
                     || member.attribution.confidence != "installation_evidence"))
         {
-            return Err("组内安装、用户或归属证据冲突；不扩大到 helper 或替代实例。".into());
+            return Err("Installation, user, or attribution evidence conflicts within the group; scope is not expanded to helpers or replacement instances.".into());
         }
     }
     Ok((scope, leader))
@@ -339,8 +362,8 @@ pub fn evaluate(snapshot: &Snapshot, state: &PolicyState, context: &PolicyContex
             };
             if !valid_state {
                 entry.reasons.push(match &validation {
-                    Err(reason) => format!("规则文件无效：{reason}"),
-                    Ok(()) => "规则未可靠载入；保持只读，不生成可执行候选。".into(),
+                    Err(reason) => format!("Invalid rule file: {reason}"),
+                    Ok(()) => "Rules were not loaded reliably; remaining read-only with no executable candidates.".into(),
                 });
             }
             let (scope, leader) = match scoped_leader(snapshot, &group.id) {
@@ -365,10 +388,10 @@ pub fn evaluate(snapshot: &Snapshot, state: &PolicyState, context: &PolicyContex
             if rules.iter().any(|rule| rule.action == RuleAction::Protect) {
                 entry
                     .reasons
-                    .push("用户保护规则命中；保护始终覆盖允许。".into());
+                    .push("A user protection rule matches; protection always overrides allow.".into());
             }
             if leader.uid.is_none() || leader.uid != Some(unsafe { libc::geteuid() }) {
-                entry.reasons.push("当前用户身份不匹配或不可读取。".into());
+                entry.reasons.push("The current user identity does not match or is unreadable.".into());
             }
             if leader
                 .attribution
@@ -378,7 +401,7 @@ pub fn evaluate(snapshot: &Snapshot, state: &PolicyState, context: &PolicyContex
             {
                 entry
                     .reasons
-                    .push("当前采样主应用位于前台；保护跳过。".into());
+                    .push("The main app is in the foreground in the current sample; skipped for protection.".into());
             }
             for member in snapshot
                 .processes
@@ -386,7 +409,7 @@ pub fn evaluate(snapshot: &Snapshot, state: &PolicyState, context: &PolicyContex
                 .filter(|process| group.process_ids.contains(&process.id))
             {
                 if member.identity.pid == std::process::id() {
-                    push_unique(&mut entry.reasons, "Bree 自身".into());
+                    push_unique(&mut entry.reasons, "Bree itself".into());
                 }
                 if member.identity.pid <= 1
                     || member.uid == Some(0)
@@ -396,12 +419,12 @@ pub fn evaluate(snapshot: &Snapshot, state: &PolicyState, context: &PolicyContex
                             .any(|root| Path::new(path).starts_with(root))
                     })
                 {
-                    push_unique(&mut entry.reasons, "系统对象".into());
+                    push_unique(&mut entry.reasons, "System object".into());
                 }
                 for reason in &member.protection_reasons {
                     // This sole presentation reason is represented by explicit capability gates.
                     // Unknown/new protection reasons always fail closed.
-                    if reason != "只读 Alpha：退出能力尚未启用" {
+                    if reason != "Read-only Alpha: termination capability is not enabled" {
                         push_unique(&mut entry.reasons, reason.clone());
                     }
                 }
@@ -413,28 +436,28 @@ pub fn evaluate(snapshot: &Snapshot, state: &PolicyState, context: &PolicyContex
                 entry.disposition = Disposition::Pending;
                 entry
                     .reasons
-                    .push("当前普通主应用有可靠安装与实例证据，尚无用户允许规则。".into());
+                    .push("The current ordinary main app has reliable installation and instance evidence, but no user allow rule.".into());
                 entry
                     .reasons
-                    .push("待确认仅用于主动设置安装规则；不表示应用无用或可以退出。".into());
+                    .push("Needs review only invites explicit installation rules; it does not mean the app is unnecessary or may be quit.".into());
                 if !context.a1_enabled || !leader.quit_supported {
                     entry
                         .reasons
-                        .push("正常退出能力尚未启用；当前仅预演，不发送退出请求。".into());
+                        .push("Normal termination is not enabled; this is a dry run, and no termination requests are sent.".into());
                 }
             } else if !context.a1_enabled || !leader.quit_supported {
                 entry
                     .reasons
-                    .push("用户允许规则命中，但正常退出能力未验证或未启用；保护跳过。".into());
+                    .push("A user allow rule matches, but normal termination is unverified or disabled; skipped for protection.".into());
             } else {
                 entry.disposition = Disposition::Automatic;
                 entry.reasons.push(
-                    "精确安装允许规则命中，当前主应用实例有效且后台，无保护冲突，A1 能力已启用。"
+                    "An exact installation allow rule matches; the current main app instance is valid and in the background, no protection conflicts exist, and A1 is enabled."
                         .into(),
                 );
                 entry
                     .reasons
-                    .push("此预演只冻结主应用实例；不扩大到组内子进程，不发送请求。".into());
+                    .push("This dry run only freezes the main app instance; it does not include child processes in the group and sends no requests.".into());
             }
             entry
         })
@@ -540,7 +563,9 @@ mod tests {
                     confidence: "high".into(),
                     explanation: "test".into(),
                 },
-                protection_reasons: vec!["只读 Alpha：退出能力尚未启用".into()],
+                protection_reasons: vec![
+                    "Read-only Alpha: termination capability is not enabled".into(),
+                ],
                 quit_supported: false,
             }],
             groups: vec![OccupancyGroup {
@@ -594,7 +619,7 @@ mod tests {
             plan.entries[0]
                 .reasons
                 .iter()
-                .any(|reason| reason.contains("不发送退出请求"))
+                .any(|reason| reason.contains("no termination requests are sent"))
         );
         assert_eq!(
             plan.entries[0].target_identity,
@@ -625,7 +650,7 @@ mod tests {
             plan.entries[0]
                 .reasons
                 .iter()
-                .any(|reason| reason.contains("保护始终覆盖允许"))
+                .any(|reason| reason.contains("protection always overrides allow"))
         );
     }
 
@@ -654,7 +679,7 @@ mod tests {
             .frontmost = false;
         snapshot.processes[0]
             .protection_reasons
-            .push("承载本次 Bree 的终端或会话".into());
+            .push("The terminal or session hosting this Bree instance".into());
         assert_eq!(evaluate(&snapshot, &state, &enabled).automatic_count, 0);
     }
 
@@ -733,7 +758,7 @@ mod tests {
             plan.entries[0]
                 .reasons
                 .iter()
-                .any(|reason| reason.contains("规则文件无效"))
+                .any(|reason| reason.contains("Invalid rule file"))
         );
     }
 
@@ -845,7 +870,7 @@ mod tests {
         assert_eq!(evaluate(&snapshot, &state, &context).automatic_count, 1);
         snapshot.processes[0]
             .protection_reasons
-            .push("未来新增保护条件".into());
+            .push("Future protection condition".into());
         assert_eq!(evaluate(&snapshot, &state, &context).protected_count, 1);
     }
 
@@ -899,7 +924,7 @@ mod tests {
             plan.entries[0]
                 .reasons
                 .iter()
-                .any(|reason| reason.contains("控制契约未验证"))
+                .any(|reason| reason.contains("control contract are unverified"))
         );
     }
 
@@ -913,7 +938,7 @@ mod tests {
             plan.entries[0]
                 .reasons
                 .iter()
-                .any(|reason| reason.contains("用户身份"))
+                .any(|reason| reason.contains("user identity"))
         );
         let mut snapshot = application_snapshot();
         snapshot.processes.push(snapshot.processes[0].clone());

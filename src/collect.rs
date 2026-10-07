@@ -58,12 +58,12 @@ impl Collector {
         let started = Instant::now();
         let sampled_at_unix_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| format!("系统时钟早于 Unix epoch：{e}"))?
+            .map_err(|e| format!("System clock is before the Unix epoch: {e}"))?
             .as_millis() as u64;
         let system = self.platform.system_memory();
         if system.total_bytes.value.is_none() || system.used_bytes.value.is_none() {
             return Err(format!(
-                "系统内存核心指标不可读取：total={}；used={}",
+                "Core system memory metrics are unreadable: total={}; used={}",
                 system.total_bytes.reason.as_deref().unwrap_or("ok"),
                 system.used_bytes.reason.as_deref().unwrap_or("ok")
             ));
@@ -105,13 +105,13 @@ impl Collector {
                             p.memory_bytes.status
                         },
                         CPU_SOURCE,
-                        "身份或 CPU 累计值不可读取",
+                        "Identity or cumulative CPU time is unreadable",
                     ),
                 };
                 let (category, system_object) = classify_process(&p, &attribution);
-                let mut protection_reasons = vec!["只读 Alpha：退出能力尚未启用".into()];
+                let mut protection_reasons = vec!["Read-only Alpha: termination capability is not enabled".into()];
                 if p.identity.pid == std::process::id() {
-                    protection_reasons.push("Bree 自身".into());
+                    protection_reasons.push("Bree itself".into());
                 }
                 if ancestors.contains(&p.identity.pid)
                     || attribution
@@ -119,26 +119,26 @@ impl Collector {
                         .as_ref()
                         .is_some_and(|a| hosting_bundles.contains(&a.bundle_path))
                 {
-                    protection_reasons.push("承载本次 Bree 的终端或会话".into());
+                    protection_reasons.push("The terminal or session hosting this Bree instance".into());
                 }
                 if p.uid.is_some_and(|uid| uid != self.platform.current_uid()) {
-                    protection_reasons.push("其他用户或系统账号".into());
+                    protection_reasons.push("Another user or a system account".into());
                 }
                 if p.uid.is_none() {
-                    protection_reasons.push("用户身份无法可靠读取".into());
+                    protection_reasons.push("User identity cannot be read reliably".into());
                 }
                 if system_object {
-                    protection_reasons.push("系统对象".into());
+                    protection_reasons.push("System object".into());
                 }
                 if p.identity.status != Validity::Ok {
-                    protection_reasons.push("实例身份无法可靠读取".into());
+                    protection_reasons.push("Instance identity cannot be read reliably".into());
                 }
                 if attribution
                     .application
                     .as_ref()
                     .is_some_and(|a| a.frontmost)
                 {
-                    protection_reasons.push("采样时位于前台（仅观察，不是执行依据）".into());
+                    protection_reasons.push("In the foreground at sampling time (observation only, not an execution basis)".into());
                 }
                 ProcessInfo {
                     id,
@@ -176,17 +176,17 @@ impl Collector {
                 .filter(|p| p.identity.status == Validity::Ok)
                 .count(),
             notes: vec![
-                "进程统一使用 RSS；共享页可能在不同进程重复出现，应用组合计不等于可释放内存。"
+                "All processes use RSS; shared pages may appear in multiple processes. App-group totals do not equal reclaimable memory."
                     .into(),
-                "读取失败保留缺失状态；仅同一完整实例标记下的指标进入采样。".into(),
-                "应用归属来自 AppKit 主应用与同 bundle 的可执行路径；不按名称或父链猜测 AI 任务。"
+                "Read failures retain missing status; only metrics with the same complete instance identity enter the sample.".into(),
+                "App attribution uses the AppKit main app and executable paths in the same bundle; AI tasks are not inferred from names or parent chains."
                     .into(),
-                "应用动态信息需要主线程 run loop 更新；前台标记仅用于观察，所有操作均禁用。".into(),
+                "Dynamic app information requires main-thread run-loop updates; foreground markers are observations only, and all actions are disabled.".into(),
             ],
         };
         if coverage.readable_memory_processes < coverage.enumerated_processes {
             diagnostics.push(format!(
-                "内存覆盖 {}/{} 个进程；缺失见逐项状态。",
+                "Memory coverage: {}/{} processes; see per-process status for missing data.",
                 coverage.readable_memory_processes, coverage.enumerated_processes
             ));
         }
@@ -208,23 +208,27 @@ fn cpu_between(previous: Option<(u64, Instant)>, total_ns: u64, now: Instant) ->
         return Metric::unavailable(
             Validity::Unknown,
             CPU_SOURCE,
-            "首次采样是基线；需要下一次真实时间差",
+            "The first sample establishes a baseline; the next sample needs a real time interval",
         );
     };
     let Some(delta_cpu) = total_ns.checked_sub(previous_total) else {
-        return Metric::unavailable(Validity::Stale, CPU_SOURCE, "累计 CPU 时间回退，重建基线");
+        return Metric::unavailable(
+            Validity::Stale,
+            CPU_SOURCE,
+            "Cumulative CPU time decreased; rebuilding the baseline",
+        );
     };
     let elapsed = now.saturating_duration_since(previous_time);
     if elapsed.as_secs() >= 30 {
         return Metric::unavailable(
             Validity::Unknown,
             CPU_SOURCE,
-            "采样间隔达到 30 秒；唤醒或长时间静置后重建 CPU 基线",
+            "Sampling interval reached 30 seconds; rebuilding the CPU baseline after wake or prolonged inactivity",
         );
     }
     let elapsed_ns = elapsed.as_nanos();
     if elapsed_ns == 0 {
-        return Metric::unavailable(Validity::Unknown, CPU_SOURCE, "采样时间差为零");
+        return Metric::unavailable(Validity::Unknown, CPU_SOURCE, "Sampling interval is zero");
     }
     Metric::ok(delta_cpu as f64 / elapsed_ns as f64 * 100.0, CPU_SOURCE)
 }
@@ -283,10 +287,12 @@ fn attribute(process: &RawProcess, apps: &[AppEvidence]) -> Attribution {
         explanation: reason.into(),
     };
     if process.identity.status != Validity::Ok {
-        return unknown("确切实例身份无效，归属未确认。");
+        return unknown("Exact instance identity is invalid; attribution is unconfirmed.");
     }
     let Some(path) = process.executable_path.as_deref() else {
-        return unknown("可执行路径不可读取，未按名称或父进程猜测归属。");
+        return unknown(
+            "Executable path is unreadable; attribution is not inferred from the name or parent process.",
+        );
     };
     let has_direct_app = apps
         .iter()
@@ -309,9 +315,9 @@ fn attribute(process: &RawProcess, apps: &[AppEvidence]) -> Attribution {
         .collect();
     if candidates.len() != 1 {
         return unknown(if candidates.is_empty() {
-            "无已核验主应用与同 bundle 路径证据；独立显示。"
+            "No verified main app and same-bundle path evidence; shown separately."
         } else {
-            "多份运行实例或嵌套 bundle 归属冲突；独立显示，不重复计数。"
+            "Attribution conflicts between running instances or nested bundles; shown separately without double counting."
         });
     }
     let candidate = candidates[0];
@@ -319,8 +325,8 @@ fn attribute(process: &RawProcess, apps: &[AppEvidence]) -> Attribution {
     Attribution { application: Some(candidate.app.clone()),
         method: if direct { "appkit_main_application" } else { "same_bundle_executable" }.into(),
         confidence: if direct { "high" } else { "installation_evidence" }.into(),
-        explanation: if direct { "AppKit 主应用 PID、可执行路径与微秒级实例标记一致。" }
-            else { "可执行文件位于已核验运行主应用的同一 bundle/Contents 内；仅表示安装归属，不证明共享关系或可停止。" }.into(),
+        explanation: if direct { "The AppKit main app PID, executable path, and instance identity with microsecond precision match." }
+            else { "The executable is within bundle/Contents of the verified running main app; this only establishes installation attribution, not sharing or permission to stop." }.into(),
     }
 }
 
@@ -337,7 +343,7 @@ fn occupancy_groups(processes: &[ProcessInfo]) -> Vec<OccupancyGroup> {
             (
                 format!("app:{anchor}"),
                 app.name.clone(),
-                "同一运行主应用及同 bundle 进程的 RSS 合计；每个实例只计一次，缺失不填零。".into(),
+                "RSS total of the same running main app and processes in its bundle; each instance is counted once, and missing values are not replaced with zero.".into(),
             )
         } else {
             (
@@ -373,7 +379,7 @@ fn occupancy_groups(processes: &[ProcessInfo]) -> Vec<OccupancyGroup> {
                         group.memory_bytes = Metric::unavailable(
                             Validity::Unknown,
                             "sum of distinct process RSS",
-                            "组内合计溢出",
+                            "Group total overflow",
                         )
                     }
                 }
@@ -382,7 +388,7 @@ fn occupancy_groups(processes: &[ProcessInfo]) -> Vec<OccupancyGroup> {
                 group.memory_bytes = Metric::unavailable(
                     Validity::Unknown,
                     "sum of distinct process RSS",
-                    "组内至少一个实例内存缺失；合计未知，详见进程",
+                    "At least one instance in the group has missing memory; the total is unknown, see individual processes",
                 )
             }
         }

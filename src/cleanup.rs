@@ -28,7 +28,7 @@ pub fn enabled() -> bool {
     false
 }
 pub fn capability_reason() -> &'static str {
-    "普通应用的精确内核实例递送契约尚未验证，实际退出继续关闭"
+    "The contract for delivering termination to an exact kernel instance of an ordinary app is unverified; actual termination remains disabled"
 }
 
 #[derive(Debug, Clone)]
@@ -50,12 +50,12 @@ pub enum Outcome {
 impl Outcome {
     pub fn text(self) -> &'static str {
         match self {
-            Self::Exited => "已退出",
-            Self::StillRunning => "仍在运行",
-            Self::RequestRefused => "请求被拒绝",
-            Self::Skipped => "已跳过",
-            Self::Cancelled => "未发送／已取消",
-            Self::Unknown => "尚未核验",
+            Self::Exited => "Exited",
+            Self::StillRunning => "Still running",
+            Self::RequestRefused => "Request refused",
+            Self::Skipped => "Skipped",
+            Self::Cancelled => "Not sent / cancelled",
+            Self::Unknown => "Not yet verified",
         }
     }
 }
@@ -169,7 +169,7 @@ fn now_ms() -> Result<u64, String> {
         .map_err(|e| e.to_string())?
         .as_millis()
         .try_into()
-        .map_err(|_| "时间值溢出")?)
+        .map_err(|_| "Time value overflow")?)
 }
 
 fn evaluated(
@@ -235,7 +235,9 @@ impl Session {
         let state = store.load()?;
         let started = now_ms()?;
         if started.abs_diff(snapshot.sampled_at_unix_ms) > PLAN_MAX_AGE.as_millis() as u64 {
-            return Err("计划采样超过 30 秒；请刷新后重新触发".into());
+            return Err(
+                "The plan sample is older than 30 seconds; refresh and trigger again".into(),
+            );
         }
         let plan = evaluated(&snapshot, &state, &mode, backend.available())?;
         let mut targets = Vec::new();
@@ -257,7 +259,7 @@ impl Session {
                     name: crate::model::safe_text(&entry.name),
                     identity: entry.target_identity.clone(),
                     outcome: Outcome::Skipped,
-                    reason: entry.reasons.join("；"),
+                    reason: entry.reasons.join("; "),
                     request_sent: false,
                     observed_ms: 0,
                 },
@@ -268,7 +270,10 @@ impl Session {
             };
             if entry.disposition == Disposition::Automatic {
                 match policy::scope_for_group(&snapshot, &entry.group_id).and_then(|scope| {
-                    let identity = entry.target_identity.as_ref().ok_or("实例标记缺失")?;
+                    let identity = entry
+                        .target_identity
+                        .as_ref()
+                        .ok_or("Instance identity is missing")?;
                     backend
                         .freeze(identity, &scope)
                         .map(|handle| (scope, handle))
@@ -278,9 +283,12 @@ impl Session {
                         target.handle = Some(handle);
                         target.finished = false;
                         target.result.outcome = Outcome::Unknown;
-                        target.result.reason = "冻结实例，尚未发送请求".into();
+                        target.result.reason = "Instance frozen; no request sent yet".into();
                     }
-                    Err(error) => target.result.reason = format!("控制对象冻结失败：{error}"),
+                    Err(error) => {
+                        target.result.reason =
+                            format!("Failed to freeze the control object: {error}")
+                    }
                 }
             }
             targets.push(target);
@@ -297,7 +305,7 @@ impl Session {
             targets: Vec::new(),
             resource_before: snapshot.system,
             resource_after: None,
-            resource_observation: "尚未进行资源复查".into(),
+            resource_observation: "Resource recheck has not run yet".into(),
             errors: Vec::new(),
         };
         store.append_record("cleanup_started", json!({"run_id":result.run_id,"plan_id":plan.plan_id,"rule_revision":state.revision,"target_count":targets.len(),"a1_enabled":backend.available(),"targets":targets.iter().map(|t| &t.result).collect::<Vec<_>>()}))?;
@@ -314,7 +322,7 @@ impl Session {
             last_resource_sample: None,
             finished: false,
             stop_sending: false,
-            progress: "计划已冻结，尚未发送请求".into(),
+            progress: "Plan frozen; no requests sent yet".into(),
             cancelled: Arc::new(AtomicBool::new(false)),
             #[cfg(test)]
             _test_root: None,
@@ -344,7 +352,7 @@ impl Session {
     fn record(&mut self, event: &str, data: serde_json::Value) -> bool {
         if let Err(error) = self.store.append_record(event, data) {
             self.result.errors.push(format!(
-                "{event} 记录失败：{error}；后续请求停止，已发请求继续观察"
+                "Failed to record {event}: {error}; further requests stopped, sent requests remain under observation"
             ));
             self.stop_sending = true;
             false
@@ -381,17 +389,17 @@ impl Session {
                 Observation::Exited { restarted } => Some((
                     Outcome::Exited,
                     if restarted {
-                        "原实例已退出；发现新实例，不重复发送请求".into()
+                        "The original instance exited; a new instance was found, and no repeat request is sent".into()
                     } else {
-                        "冻结的原实例已退出".into()
+                        "The frozen original instance exited".into()
                     },
                 )),
                 Observation::Running if elapsed >= EXIT_WAIT => Some((
                     Outcome::StillRunning,
-                    "15 秒内未观察到退出；可能等待保存或拒绝，不自动强退".into(),
+                    "No exit observed within 15 seconds; the app may be waiting for save or refusing. No automatic force quit".into(),
                 )),
                 Observation::Unknown(error) if elapsed >= EXIT_WAIT => {
-                    Some((Outcome::Unknown, format!("退出观察不完整：{error}")))
+                    Some((Outcome::Unknown, format!("Exit observation is incomplete: {error}")))
                 }
                 _ => None,
             };
@@ -410,7 +418,7 @@ impl Session {
                 if !target.finished && target.sent_at.is_none() {
                     target.finished = true;
                     target.result.outcome = Outcome::Skipped;
-                    target.result.reason = "必要记录失败；未发送请求".into();
+                    target.result.reason = "Required record failed; no request sent".into();
                 }
             }
         } else if let Some(index) = self
@@ -425,7 +433,7 @@ impl Session {
         }
         let completed = self.targets.iter().filter(|t| t.finished).count();
         self.progress = format!(
-            "已核验 {completed}/{} 项；已发送 {} 个请求。Ctrl+C 取消尚未发送项",
+            "Verified {completed}/{} targets; sent {} requests. Ctrl+C cancels targets not yet sent",
             self.targets.len(),
             self.targets
                 .iter()
@@ -435,14 +443,14 @@ impl Session {
         if self.targets.iter().all(|t| t.finished) {
             if !self.targets.iter().any(|t| t.result.request_sent) {
                 self.result.resource_observation = format!(
-                    "没有发送退出请求，未进行 10 秒资源复查。{}",
+                    "No termination requests were sent; the 10-second resource recheck did not run. {}",
                     capability_reason()
                 );
                 self.finish();
                 return;
             }
             let start = *self.resource_started.get_or_insert(now);
-            self.progress = "退出观察结束，正在进行 10 秒系统资源复查；变化不归因于 Bree".into();
+            self.progress = "Exit observation finished; running a 10-second system resource recheck. Changes are not attributed to Bree".into();
             if self
                 .last_resource_sample
                 .is_none_or(|last| now.saturating_duration_since(last) >= Duration::from_secs(2))
@@ -450,7 +458,10 @@ impl Session {
                 self.last_resource_sample = Some(now);
                 match self.backend.snapshot() {
                     Ok(sample) => self.result.resource_after = Some(sample.system),
-                    Err(error) => self.result.errors.push(format!("资源复查缺失：{error}")),
+                    Err(error) => self
+                        .result
+                        .errors
+                        .push(format!("Resource recheck is missing: {error}")),
                 }
             }
             if now.saturating_duration_since(start) >= RESOURCE_WINDOW {
@@ -476,10 +487,10 @@ impl Session {
                 return Ok(Dispatch::Cancelled);
             }
             if now.saturating_duration_since(self.created) > PLAN_MAX_AGE {
-                return Err("冻结计划超过 30 秒，新目标留待下一次触发".into());
+                return Err("The frozen plan is older than 30 seconds; new targets are left for the next trigger".into());
             }
             if state.revision != self.plan.rule_revision {
-                return Err("规则修订已变化；当前冻结计划不扩大或重新选择目标".into());
+                return Err("Rule revision changed; the current frozen plan is not expanded and targets are not reselected".into());
             }
             let sample = self.backend.snapshot()?;
             let fresh = evaluated(&sample, state, &self.mode, self.backend.available())?;
@@ -488,15 +499,15 @@ impl Session {
                 .entries
                 .iter()
                 .find(|e| e.group_id == target.result.group_id)
-                .ok_or("原组实例已退出或变化")?;
+                .ok_or("The original group instance exited or changed")?;
             if entry.disposition != Disposition::Automatic
                 || entry.target_identity != target.result.identity
             {
-                return Err(format!("执行重验未通过：{}", entry.reasons.join("；")));
+                return Err(format!("Execution revalidation failed: {}", entry.reasons.join("; ")));
             }
             if policy::scope_for_group(&sample, &entry.group_id)? != *target.scope.as_ref().unwrap()
             {
-                return Err("安装范围已变化".into());
+                return Err("Installation scope changed".into());
             }
             // A crash after preparation is Unknown, never a replay instruction.
             if !self.record(
@@ -509,7 +520,7 @@ impl Session {
                 return Ok(Dispatch::Cancelled);
             }
             if Instant::now().saturating_duration_since(self.created) > PLAN_MAX_AGE {
-                return Err("必要记录等待后计划超过 30 秒，未发送请求".into());
+                return Err("The plan is older than 30 seconds after waiting for a required record; no request sent".into());
             }
             let target = &self.targets[index];
             Ok(Dispatch::Requested(self.backend.request(
@@ -553,17 +564,21 @@ impl Session {
                 // The observation budget starts after the call accepts the request,
                 // rather than before state/log waits and native revalidation.
                 target.sent_at = Some(Instant::now().max(now));
-                target.result.reason = "请求已发送，等待实际退出观察；未完成核验".into();
+                target.result.reason =
+                    "Request sent; waiting to observe actual exit. Verification is incomplete"
+                        .into();
             }
             Ok(false) => {
                 target.finished = true;
                 target.result.outcome = Outcome::RequestRefused;
-                target.result.reason = "正常退出请求未被接受；不自动强退".into();
+                target.result.reason =
+                    "The normal termination request was not accepted; no automatic force quit"
+                        .into();
             }
             Err(error) => {
                 target.finished = true;
                 target.result.outcome = Outcome::Skipped;
-                target.result.reason = format!("原生重验或请求失败：{error}");
+                target.result.reason = format!("Native revalidation or request failed: {error}");
             }
         }
         self.record(
@@ -593,14 +608,14 @@ impl Session {
                 if target.result.request_sent {
                     target.result.outcome = Outcome::Unknown;
                     target.result.reason =
-                        "取消时已发送请求但未完成退出核验；不能撤销已发请求".into();
+                        "A request was sent before cancellation, but exit verification is incomplete; sent requests cannot be recalled".into();
                 } else {
                     target.result.outcome = Outcome::Cancelled;
-                    target.result.reason = "取消时尚未发送请求".into();
+                    target.result.reason = "No request had been sent at cancellation".into();
                 }
             }
         }
-        self.result.resource_observation = "用户取消，资源观察窗口不完整；已发请求不能撤销".into();
+        self.result.resource_observation = "Cancelled by the user; the resource observation window is incomplete. Sent requests cannot be recalled".into();
         self.finish();
     }
     fn finish(&mut self) {
@@ -609,23 +624,28 @@ impl Session {
         let data = serde_json::to_value(&self.result).expect("serializable result");
         self.record("cleanup_finished", data);
         self.finished = true;
-        self.progress = "处理已结束，退出事实与资源观察分开记录".into();
+        self.progress =
+            "Cleanup finished; exit facts and resource observations are recorded separately".into();
         self._execution.take();
     }
 }
 
 pub fn resource_text(before: &SystemMemory, after: Option<&SystemMemory>) -> String {
     let Some(after) = after else {
-        return "10 秒窗口没有有效复查数据，不能判断系统资源变化".into();
+        return "No valid recheck data in the 10-second window; system resource changes cannot be determined".into();
     };
     let memory = match (before.used_bytes.value, after.used_bytes.value) {
-        (Some(a), Some(b)) if b < a => format!("系统已用观察到减少 {} bytes", a - b),
-        (Some(a), Some(b)) if b > a => format!("系统已用观察到增加 {} bytes", b - a),
-        (Some(_), Some(_)) => "系统已用未变化".into(),
-        _ => "系统已用缺失，不能比较".into(),
+        (Some(a), Some(b)) if b < a => {
+            format!("System used memory observed to decrease by {} bytes", a - b)
+        }
+        (Some(a), Some(b)) if b > a => {
+            format!("System used memory observed to increase by {} bytes", b - a)
+        }
+        (Some(_), Some(_)) => "System used memory did not change".into(),
+        _ => "System used memory is missing; comparison is unavailable".into(),
     };
     format!(
-        "10 秒复查：{memory}；压力 {} → {}。自然波动不归因于 Bree，未改善也是合法结果",
+        "10-second recheck: {memory}; pressure {} → {}. Natural fluctuations are not attributed to Bree; no improvement is also a valid result",
         crate::output::pressure_text(&before.pressure),
         crate::output::pressure_text(&after.pressure)
     )
@@ -641,7 +661,7 @@ struct NativeBackend;
 #[cfg(not(target_os = "macos"))]
 impl NativeBackend {
     fn new() -> Result<Self, String> {
-        Err("正常退出只面向已验证 macOS 环境".into())
+        Err("Normal termination is only available in verified macOS environments".into())
     }
 }
 #[cfg(not(target_os = "macos"))]
@@ -650,10 +670,10 @@ impl Backend for NativeBackend {
         false
     }
     fn snapshot(&mut self) -> Result<Snapshot, String> {
-        Err("平台不支持".into())
+        Err("Platform unsupported".into())
     }
     fn freeze(&mut self, _: &ProcessIdentity, _: &AppScope) -> Result<usize, String> {
-        Err("平台不支持".into())
+        Err("Platform unsupported".into())
     }
     fn request(
         &mut self,
@@ -662,10 +682,10 @@ impl Backend for NativeBackend {
         _: &AppScope,
         _: &AtomicBool,
     ) -> Result<bool, String> {
-        Err("平台不支持".into())
+        Err("Platform unsupported".into())
     }
     fn observe(&mut self, _: usize, _: &ProcessIdentity, _: &AppScope) -> Observation {
-        Observation::Unknown("平台不支持".into())
+        Observation::Unknown("Platform unsupported".into())
     }
 }
 
@@ -859,7 +879,7 @@ mod tests {
                 callback();
             }
             if cancelled.load(Ordering::Acquire) {
-                return Err("请求前取消".into());
+                return Err("Cancelled before the request".into());
             }
             let mut state = self.0.borrow_mut();
             assert_eq!(state.freezes[handle], identity.object_id());
@@ -945,7 +965,7 @@ mod tests {
         let result = session.result().unwrap();
         assert_eq!(result.targets[0].outcome, Outcome::Exited);
         assert_eq!(result.exit_code(), 0);
-        assert!(result.resource_observation.contains("增加 200"));
+        assert!(result.resource_observation.contains("increase by 200"));
         assert_eq!(state.borrow().requests.len(), 1);
         assert_eq!(state.borrow().freezes.len(), 1);
     }
@@ -1001,7 +1021,7 @@ mod tests {
             .unwrap();
         session.tick();
         assert_eq!(session.result().unwrap().exit_code(), 4);
-        assert!(session.targets()[0].reason.contains("修订已变化"));
+        assert!(session.targets()[0].reason.contains("revision changed"));
         assert!(state.borrow().requests.is_empty());
     }
     #[test]
@@ -1148,7 +1168,7 @@ mod tests {
         session.tick_at(start + Duration::from_secs(1));
         session.tick_at(start + Duration::from_secs(11));
         session.tick_at(start + Duration::from_secs(12));
-        assert!(session.targets()[0].reason.contains("新实例"));
+        assert!(session.targets()[0].reason.contains("new instance"));
         assert_eq!(state.borrow().requests.len(), 1);
     }
     #[test]
@@ -1294,7 +1314,7 @@ mod tests {
             .is_err()
         );
         sample.system.used_bytes = Metric::unavailable(Validity::Denied, "test", "denied");
-        assert!(resource_text(&sample.system, Some(&sample.system)).contains("缺失"));
+        assert!(resource_text(&sample.system, Some(&sample.system)).contains("missing"));
         assert!(!enabled());
     }
 }

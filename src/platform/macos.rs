@@ -103,7 +103,7 @@ impl Backend {
             Ok(_) => Metric::unavailable(
                 Validity::Unknown,
                 "sysctl hw.memsize",
-                "总物理内存为零，结果无效",
+                "Total physical memory is zero; result invalid",
             ),
             Err(e) => e.metric("sysctl hw.memsize"),
         };
@@ -122,7 +122,7 @@ impl Backend {
             initialization_note: if MAIN_INITIALIZED.load(Ordering::Acquire) {
                 None
             } else {
-                Some("AppKit 未在主线程初始化；应用动态信息可能滞后，所有操作禁用。".into())
+                Some("AppKit was not initialized on the main thread; dynamic app information may lag, and all actions are disabled.".into())
             },
         })
     }
@@ -157,7 +157,11 @@ impl Backend {
             }
             (_, None) => {
                 let missing = || {
-                    Metric::unavailable(Validity::Unknown, "sysconf _SC_PAGESIZE", "页大小不可读取")
+                    Metric::unavailable(
+                        Validity::Unknown,
+                        "sysconf _SC_PAGESIZE",
+                        "Page size is unreadable",
+                    )
                 };
                 (missing(), missing(), missing())
             }
@@ -173,13 +177,13 @@ impl Backend {
             Ok(value) => Metric::unavailable(
                 Validity::Unknown,
                 PRESSURE_SOURCE,
-                format!("未识别的内核等级 {value}"),
+                format!("Unrecognized kernel level {value}"),
             ),
             Err(e) => e.metric(PRESSURE_SOURCE),
         };
         SystemMemory { total_bytes: self.total_memory.clone(), used_bytes, compressed_bytes,
             swap_used_bytes, cached_bytes, pressure,
-            used_definition: "已用 = (internal_page_count - purgeable_count + wire_count + compressor_page_count) × 系统页大小；压缩 = compressor_page_count × 页大小（实际压缩占用）；缓存估计 = (external_page_count + purgeable_count) × 页大小。来自系统 VM 计数，不由进程合计推导；不保证与活动监视器完全相同。".into() }
+            used_definition: "Used = (internal_page_count - purgeable_count + wire_count + compressor_page_count) × system page size; compressed = compressor_page_count × page size (actual compressed footprint); estimated cache = (external_page_count + purgeable_count) × page size. Based on system VM counters, not process totals; not guaranteed to match Activity Monitor exactly.".into() }
     }
 
     pub fn processes(&self) -> Result<(Vec<RawProcess>, Vec<String>), String> {
@@ -189,7 +193,9 @@ impl Backend {
             diagnostics.push(note.clone());
         }
         if !self.boot_valid {
-            diagnostics.push("启动会话 UUID 不可读取；实例身份降为未知。".into());
+            diagnostics.push(
+                "Boot session UUID is unreadable; instance identity downgraded to unknown.".into(),
+            );
         }
         let processes = pids
             .into_iter()
@@ -213,7 +219,7 @@ impl Backend {
             uid: None,
             name: format!("PID {pid}"),
             executable_path: None,
-            memory_bytes: Metric::unavailable(Validity::Unknown, RSS_SOURCE, "身份未读取"),
+            memory_bytes: Metric::unavailable(Validity::Unknown, RSS_SOURCE, "Identity not read"),
             cpu_total_ns: None,
             sampled_at: Instant::now(),
         };
@@ -268,7 +274,7 @@ impl Backend {
                 result.memory_bytes = Metric::unavailable(
                     status,
                     RSS_SOURCE,
-                    "采样前后实例身份不一致，或身份标记不可验证",
+                    "Instance identity differs before and after sampling, or its identity cannot be verified",
                 );
                 result.executable_path = None;
             }
@@ -374,7 +380,7 @@ fn read_applications_on_main_thread() -> Vec<AppEvidence> {
 fn checked_bytes(value: Option<u64>, source: &str) -> Metric<u64> {
     match value {
         Some(value) => Metric::ok(value, source),
-        None => Metric::unavailable(Validity::Unknown, source, "内存字节计数溢出"),
+        None => Metric::unavailable(Validity::Unknown, source, "Memory byte count overflow"),
     }
 }
 
@@ -416,7 +422,7 @@ fn sysctl_value<T>(name: &CStr) -> Result<T, ReadError> {
     }
     if length != expected {
         return Err(ReadError::invalid(&format!(
-            "{} 返回结构大小 {length}，预期 {expected}",
+            "{} returned structure size {length}, expected {expected}",
             name.to_string_lossy()
         )));
     }
@@ -438,7 +444,7 @@ fn sysctl_string(name: &CStr) -> Result<String, ReadError> {
         return Err(ReadError::os(&name.to_string_lossy()));
     }
     if length == 0 || length > 4096 {
-        return Err(ReadError::invalid("启动会话标记长度无效"));
+        return Err(ReadError::invalid("Invalid boot session identity length"));
     }
     let mut value = vec![0_u8; length];
     let code = unsafe {
@@ -472,7 +478,7 @@ fn vm_statistics() -> Result<libc::vm_statistics64, ReadError> {
     };
     if code != libc::KERN_SUCCESS {
         return Err(ReadError::invalid(&format!(
-            "host_statistics64 返回 Mach 错误 {code}"
+            "host_statistics64 returned Mach error {code}"
         )));
     }
     // Earlier OS releases return an older prefix. All fields used here must be present.
@@ -480,7 +486,7 @@ fn vm_statistics() -> Result<libc::vm_statistics64, ReadError> {
         + mem::size_of::<libc::natural_t>();
     if (count as usize) * mem::size_of::<libc::integer_t>() < required_bytes {
         return Err(ReadError::invalid(
-            "host_statistics64 返回的结构不包含必需字段",
+            "The structure returned by host_statistics64 lacks required fields",
         ));
     }
     Ok(unsafe { stat.assume_init() })
@@ -494,7 +500,9 @@ fn enumerate_pids() -> Result<Vec<u32>, ReadError> {
     let mut capacity = estimated as usize + 128;
     for _ in 0..4 {
         if capacity > 1_000_000 {
-            return Err(ReadError::invalid("进程枚举容量超出合理上限"));
+            return Err(ReadError::invalid(
+                "Process enumeration capacity exceeds the reasonable limit",
+            ));
         }
         let mut pids = vec![0_i32; capacity];
         let count = unsafe {
@@ -520,7 +528,9 @@ fn enumerate_pids() -> Result<Vec<u32>, ReadError> {
         pids.dedup();
         return Ok(pids);
     }
-    Err(ReadError::invalid("进程列表连续增长，未取得完整枚举"))
+    Err(ReadError::invalid(
+        "The process list kept growing; complete enumeration was not obtained",
+    ))
 }
 
 fn pid_info<T>(pid: u32, flavor: c_int) -> Result<T, ReadError> {
@@ -540,7 +550,7 @@ fn pid_info<T>(pid: u32, flavor: c_int) -> Result<T, ReadError> {
     }
     if count as usize != size {
         return Err(ReadError::invalid(&format!(
-            "proc_pidinfo({flavor}) 结构大小 {count}，预期 {size}"
+            "proc_pidinfo({flavor}) structure size {count}, expected {size}"
         )));
     }
     Ok(unsafe { value.assume_init() })
@@ -549,7 +559,9 @@ fn pid_info<T>(pid: u32, flavor: c_int) -> Result<T, ReadError> {
 fn bsd_info(pid: u32) -> Result<libc::proc_bsdinfo, ReadError> {
     let value: libc::proc_bsdinfo = pid_info(pid, libc::PROC_PIDTBSDINFO)?;
     if value.pbi_pid != pid {
-        return Err(ReadError::invalid("proc_bsdinfo 返回的 PID 与请求不符"));
+        return Err(ReadError::invalid(
+            "The PID returned by proc_bsdinfo differs from the requested PID",
+        ));
     }
     Ok(value)
 }
@@ -591,11 +603,11 @@ fn executable_path(pid: u32) -> Result<String, ReadError> {
         return Err(ReadError::os("proc_pidpath"));
     }
     if count as usize >= buffer.len() {
-        return Err(ReadError::invalid("可执行路径截断"));
+        return Err(ReadError::invalid("Executable path truncated"));
     }
     let end = buffer.iter().position(|v| *v == 0).unwrap_or(buffer.len());
     if end == buffer.len() {
-        return Err(ReadError::invalid("可执行路径没有终止符"));
+        return Err(ReadError::invalid("Executable path has no terminator"));
     }
     Ok(String::from_utf8_lossy(&buffer[..end]).into_owned())
 }

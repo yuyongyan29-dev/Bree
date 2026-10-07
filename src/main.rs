@@ -25,8 +25,8 @@ use std::{
 #[command(
     name = "bree",
     version,
-    about = "看清本机内存占用 · 处理闭环 Alpha",
-    long_about = "本地内存查看、规则和处理记录。交互终端输入 bree 进入菜单；A1 能力仍关闭，不发送应用退出请求。"
+    about = "Understand memory usage on your Mac",
+    long_about = "Inspect local memory usage, application rules and cleanup records. Run bree in an interactive terminal to open the menu. Application quit requests are disabled in this Alpha."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -35,26 +35,26 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// 单次系统内存概况
+    /// Show a single system memory snapshot
     Status {
         #[arg(long)]
         json: bool,
     },
-    /// 按有证据的应用分组查看全部占用；未知归属独立保留
+    /// List memory usage by verified application ownership; retain unknown owners
     List {
         #[arg(long)]
         json: bool,
-        /// 限制显示的组数；JSON 中仍保留完整进程表及覆盖统计
+        /// Limit displayed groups; JSON retains the full process table and coverage
         #[arg(long, value_parser = clap::value_parser!(usize))]
         limit: Option<usize>,
     },
-    /// 查看 list 返回的对象 ID；实时重采样并匹配当前实例
+    /// Inspect an object ID from list using a fresh sample of the current instance
     Inspect {
         id: String,
         #[arg(long)]
         json: bool,
     },
-    /// 前台持续观察；管道模式输出文本或 JSONL
+    /// Watch in the foreground; output text or JSONL when piped
     Watch {
         #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u64).range(1..=60))]
         interval: u64,
@@ -63,29 +63,29 @@ enum Command {
         #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
         count: Option<u64>,
     },
-    /// 检查采集覆盖与当前能力；不会申请权限或执行清理
+    /// Check sampling coverage and capabilities without requesting permissions
     Doctor {
         #[arg(long)]
         json: bool,
     },
-    /// 冻结处理计划；退出能力未通过的对象仍跳过
+    /// Freeze a cleanup plan; skip targets without verified quit capability
     Clean {
         #[arg(long)]
         dry_run: bool,
-        /// 明确发起非交互批次；不能绕过策略或能力
+        /// Start a noninteractive session; policy and capability checks still apply
         #[arg(long, conflicts_with = "dry_run")]
         yes: bool,
         #[arg(long)]
         json: bool,
     },
-    /// 查看完成／未完成的处理记录；绝不重放请求
+    /// Show completed and incomplete cleanup records without replaying requests
     History {
         #[arg(long)]
         json: bool,
         #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(usize))]
         limit: usize,
     },
-    /// 显示 GPL-3.0 许可；第三方声明随程序附带，可离线查看
+    /// Show the GPL-3.0 license or bundled third-party notices offline
     License {
         #[arg(long)]
         third_party: bool,
@@ -99,7 +99,7 @@ fn main() {
     let tty = io::stdin().is_terminal() && io::stdout().is_terminal();
     if cli.command.is_none() && !tty {
         let code = match output::write_text(
-            "bree · 处理闭环 Alpha\n用法：bree status | list | inspect <id> | watch | doctor | clean --dry-run | history\n非交互批次使用 clean --yes --json；能力闸门不会被 --yes 绕过。交互终端输入 bree 进入菜单。",
+            "bree · Alpha\nUsage: bree status | list | inspect <id> | watch | doctor | clean --dry-run | history | license\nFor a noninteractive session, use clean --yes --json. Capability checks still apply. Run bree in an interactive terminal to open the menu.",
         ) {
             Ok(()) => 0,
             Err(_) => 1,
@@ -124,7 +124,7 @@ fn main() {
         })
     ) && !clean_ui
     {
-        let message = "非交互 clean 需要 --yes；仅预演请使用 --dry-run";
+        let message = "Noninteractive clean requires --yes; use --dry-run to preview";
         if matches!(cli.command, Some(Command::Clean { json: true, .. })) {
             let _ = output::write_json(
                 &json!({"schema_version":SCHEMA_VERSION,"error":{"code":"invalid_arguments","message":message}}),
@@ -171,7 +171,7 @@ fn main() {
             }
         })
     {
-        eprintln!("bree: 无法注册取消处理：{error}");
+        eprintln!("bree: Cannot register the cancellation handler: {error}");
         std::process::exit(1);
     }
     let result = execute(cli.command, tty, &cancelled, &action_active);
@@ -187,7 +187,7 @@ fn main() {
         Err(error) => {
             let was_cancelled = cancelled.load(Ordering::Acquire);
             let message = if was_cancelled {
-                format!("命令取消；{error}")
+                format!("Command cancelled; {error}")
             } else {
                 error
             };
@@ -334,7 +334,7 @@ fn execute(
             });
             if let Some(entry) = entry {
                 text.push_str(&format!(
-                    "\n策略：{}\n{}\n",
+                    "\nPolicy: {}\n{}\n",
                     disposition_text(entry.disposition),
                     entry
                         .reasons
@@ -364,7 +364,7 @@ fn execute(
                 }) {
                     if let Some(label) = label_process(process) {
                         text.push_str(&format!(
-                            "开发工具：{}\n依据：{}\n",
+                            "Developer tool: {}\nEvidence: {}\n",
                             label.label, label.evidence
                         ));
                     }
@@ -379,12 +379,12 @@ fn execute(
                 }
                 Err(error) => json!({"error":safe_text(&error),"write_status":"not_probed"}),
             };
-            let report = json!({"schema_version":SCHEMA_VERSION,"version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"architecture":std::env::consts::ARCH,"sampled_at_unix_ms":snapshot.sampled_at_unix_ms,"coverage":snapshot.coverage,"diagnostics":snapshot.diagnostics,"capabilities":{"read_only":!cleanup::enabled(),"rules_enabled":true,"dry_run_enabled":true,"cleanup_session_enabled":true,"history_enabled":true,"cleanup_enabled":cleanup::enabled(),"a1_enabled":cleanup::enabled(),"a2_enabled":false,"ai_attribution_enabled":true,"background_service":false},"capability_gate_reason":cleanup::capability_reason(),"rule_storage":storage,"policy_state_valid":observation.error.is_none(),"policy_error":observation.error,"notes":["规则、预演、批次结果与历史可用；正常退出能力仍关闭，A2 未启用。","开发标签仅限已验证的 Claude 2.1.292 原生安装与 Codex App CLI 路径；不是项目、完成、共享或停止证据。","doctor 不通过权限位承诺写入成功，实际写入仍可能失败。","拟支持系统须逐环境实测；本机运行不代表跨版本验收。","不申请 root、完全磁盘访问、辅助功能或自动化权限。"]});
+            let report = json!({"schema_version":SCHEMA_VERSION,"version":env!("CARGO_PKG_VERSION"),"platform":std::env::consts::OS,"architecture":std::env::consts::ARCH,"sampled_at_unix_ms":snapshot.sampled_at_unix_ms,"coverage":snapshot.coverage,"diagnostics":snapshot.diagnostics,"capabilities":{"read_only":!cleanup::enabled(),"rules_enabled":true,"dry_run_enabled":true,"cleanup_session_enabled":true,"history_enabled":true,"cleanup_enabled":cleanup::enabled(),"a1_enabled":cleanup::enabled(),"a2_enabled":false,"ai_attribution_enabled":true,"background_service":false},"capability_gate_reason":cleanup::capability_reason(),"rule_storage":storage,"policy_state_valid":observation.error.is_none(),"policy_error":observation.error,"notes":["Rules, dry-run, session results and history are available. Application quitting and AI task reclamation remain disabled.","Developer labels cover only verified Claude 2.1.292 native installations and Codex App CLI paths. They do not establish project ownership, task completion, sharing or permission to stop a task.","Permission bits do not guarantee a successful write; storage writes may still fail.","Each supported environment requires testing. A local run does not verify other system versions.","Bree does not request root, Full Disk Access, Accessibility or Automation permissions."]});
             if json {
                 output::write_json(&report)
             } else {
                 output::write_text(&format!(
-                    "{}\n{}\n\n能力：规则、预演、批次结果与历史、有限开发工具标签；实际清理 A1/A2、后台服务均未启用。\n存储：{}\n{}",
+                    "{}\n{}\n\nCapabilities: rules, dry-run, session results, history and limited developer-tool labels. Application quitting, AI task reclamation and background services are disabled.\nStorage: {}\n{}",
                     output::status_text(&snapshot),
                     policy_summary(&observation),
                     report["rule_storage"],
@@ -410,7 +410,7 @@ fn execute(
                 output::write_json(&plan)
             } else {
                 output::write_text(&format!(
-                    "Bree 清理预演 · 只读，不发送请求\n规则版本 {} · revision {} · {}\n自动 {} · 待确认规则 {} · 保护 {}\n{}",
+                    "Bree cleanup preview · Read-only; no requests sent\nPolicy version {} · revision {} · {}\nAutomatic {} · Needs review {} · Protected {}\n{}",
                     plan.policy_version,
                     plan.rule_revision,
                     plan.plan_id,
@@ -428,7 +428,7 @@ fn execute(
                                 .iter()
                                 .map(|reason| safe_text(reason))
                                 .collect::<Vec<_>>()
-                                .join("；")
+                                .join("; ")
                         ))
                         .collect::<Vec<_>>()
                         .join("\n")
@@ -471,15 +471,15 @@ fn observe_rules(snapshot: &Snapshot) -> RuleObservation {
 
 fn disposition_text(value: Disposition) -> &'static str {
     match value {
-        Disposition::Automatic => "自动",
-        Disposition::Pending => "待确认规则",
-        Disposition::Protected => "保护／只读",
+        Disposition::Automatic => "Automatic",
+        Disposition::Pending => "Needs review",
+        Disposition::Protected => "Protected / read-only",
     }
 }
 
 fn policy_summary(observation: &RuleObservation) -> String {
     let mut text = format!(
-        "规则 revision {} · 自动 {} · 待确认规则 {} · 保护 {} · 正常退出未启用",
+        "Rule revision {} · Automatic {} · Needs review {} · Protected {} · Application quitting disabled",
         observation.plan.rule_revision,
         observation.plan.automatic_count,
         observation.plan.pending_count,
@@ -487,7 +487,7 @@ fn policy_summary(observation: &RuleObservation) -> String {
     );
     if let Some(error) = &observation.error {
         text.push_str(&format!(
-            "\n规则无效：{error}；查看继续，设置与预演保持关闭。"
+            "\nInvalid rules: {error}; inspection remains available, but settings and preview are disabled."
         ));
     }
     text
@@ -522,7 +522,7 @@ fn classified_list_text(
     observation: &RuleObservation,
 ) -> String {
     let mut text = format!(
-        "{}\n{}\n\n占用\t实例\t分类\t策略\t名称\t对象 ID\n",
+        "{}\n{}\n\nMemory\tInstances\tCategory\tPolicy\tName\tObject ID\n",
         output::status_text(snapshot),
         policy_summary(observation)
     );
@@ -537,7 +537,7 @@ fn classified_list_text(
             .iter()
             .find(|entry| entry.group_id == group.id)
             .map(|entry| disposition_text(entry.disposition))
-            .unwrap_or("未知");
+            .unwrap_or("Unknown");
         text.push_str(&format!(
             "{}\t{}\t{}\t{}\t{}\t{}\n",
             output::metric_bytes(&group.memory_bytes),
@@ -548,7 +548,7 @@ fn classified_list_text(
             safe_text(&group.id)
         ));
     }
-    text.push_str("逐项判定原因见 inspect；开发标签不代表任务完成或可停止。\n");
+    text.push_str("Use inspect for individual reasons. Developer labels do not establish task completion or permission to stop a task.\n");
     text
 }
 
@@ -591,7 +591,7 @@ fn run_batch(
         output::write_json(result)?;
     } else {
         output::write_text(&format!(
-            "Bree 处理结果 · {}\n{}\n{}\n{}",
+            "Bree cleanup results · {}\n{}\n{}\n{}",
             result.run_id,
             result
                 .targets
@@ -608,7 +608,7 @@ fn run_batch(
             result
                 .errors
                 .iter()
-                .map(|e| format!("记录／观察缺口：{}", safe_text(e)))
+                .map(|e| format!("Recording or observation gap: {}", safe_text(e)))
                 .collect::<Vec<_>>()
                 .join("\n")
         ))?;
@@ -616,9 +616,9 @@ fn run_batch(
     Ok(result.exit_code())
 }
 fn history_text(items: &[history::HistoryItem]) -> String {
-    let mut text = "Bree 处理记录 · 只读，不重放动作\n".to_string();
+    let mut text = "Bree cleanup history · Read-only; actions are never replayed\n".to_string();
     if items.is_empty() {
-        text.push_str("暂无处理记录。\n");
+        text.push_str("No cleanup records yet.\n");
     }
     for item in items {
         text.push_str(&format!(
@@ -631,7 +631,7 @@ fn history_text(items: &[history::HistoryItem]) -> String {
         if let Some(result) = &item.result {
             for target in &result.targets {
                 text.push_str(&format!(
-                    "  {}：{}；{}\n",
+                    "  {}: {}; {}\n",
                     safe_text(&target.name),
                     target.outcome.text(),
                     safe_text(&target.reason)

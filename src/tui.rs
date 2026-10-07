@@ -40,7 +40,6 @@ const ACCENT: Color = Color::Rgb(190, 86, 24);
 const FOREGROUND: Color = Color::Reset;
 const MUTED: Color = Color::Reset;
 const BACKGROUND: Color = Color::Reset;
-const SELECTED: Color = Color::Reset;
 const MIN_WIDTH: u16 = 48;
 const MIN_HEIGHT: u16 = 16;
 
@@ -83,10 +82,10 @@ fn exit_for_external_signal() -> ! {
 
 impl TerminalGuard {
     fn enter() -> Result<Self, String> {
-        enable_raw_mode().map_err(|error| format!("无法进入终端输入模式：{error}"))?;
+        enable_raw_mode().map_err(|error| format!("Cannot enter terminal input mode: {error}"))?;
         if let Err(error) = execute!(io::stdout(), EnterAlternateScreen, Hide) {
             restore_terminal();
-            return Err(format!("无法初始化终端：{error}"));
+            return Err(format!("Cannot initialize the terminal: {error}"));
         }
         let previous_hook: Arc<PanicHook> = Arc::from(panic::take_hook());
         let panic_hook = Arc::clone(&previous_hook);
@@ -371,7 +370,7 @@ impl App {
     fn begin_add(&mut self, id: &str, action: RuleAction) {
         if self.policy_error.is_some() || self.store.is_none() {
             self.notice = Some(
-                "规则存储不可用，当前保持只读。请在设置页查看原因；不会覆盖损坏的配置。".into(),
+                "Rules unavailable; read-only mode. See Settings for details. Damaged configuration will be preserved.".into(),
             );
             return;
         }
@@ -394,14 +393,20 @@ impl App {
                 self.confirmation_scroll = 0;
             }
             Err(error) => {
-                self.notice = Some(format!("无法为此对象设置应用规则：{}", safe_text(&error)))
+                self.notice = Some(format!(
+                    "Cannot set an application rule for this object: {}",
+                    safe_text(&error)
+                ))
             }
         }
     }
 
     fn begin_remove(&mut self) {
         if self.policy_error.is_some() || self.store.is_none() {
-            self.notice = Some("规则存储不可用，无法修改。修复原配置后按 R 重新读取。".into());
+            self.notice = Some(
+                "Rules unavailable. Repair the original configuration, then press R to reload."
+                    .into(),
+            );
             return;
         }
         let rule = match &self.page {
@@ -424,25 +429,27 @@ impl App {
     fn begin_exit(&mut self, id: &str) {
         if !cleanup::enabled() {
             self.notice =
-                Some("正常退出能力尚未启用，当前保持只读。允许规则不会开启这项能力。".into());
+                Some("Normal quit is disabled; read-only mode. An Allow rule does not enable this capability.".into());
             return;
         }
         self.reload_policy();
         if self.policy_error.is_some() || self.store.is_none() {
-            self.notice = Some("规则存储不可读取，正常退出已禁用。请在设置页查看原因。".into());
+            self.notice = Some(
+                "Rules cannot be read; normal quit is disabled. See Settings for details.".into(),
+            );
             return;
         }
         if let Some(entry) = self.entry(id)
             && entry.disposition == Disposition::Protected
         {
             self.notice = Some(format!(
-                "此对象受保护，不能请求退出：{}",
+                "This object is protected and cannot be asked to quit: {}",
                 entry
                     .reasons
                     .iter()
                     .map(|reason| safe_text(reason))
                     .collect::<Vec<_>>()
-                    .join("；")
+                    .join("; ")
             ));
             return;
         }
@@ -452,7 +459,10 @@ impl App {
         let scope = match scope_for_group(snapshot, id) {
             Ok(scope) => scope,
             Err(error) => {
-                self.notice = Some(format!("此对象不支持正常退出：{}", safe_text(&error)));
+                self.notice = Some(format!(
+                    "This object does not support normal quit: {}",
+                    safe_text(&error)
+                ));
                 return;
             }
         };
@@ -460,7 +470,10 @@ impl App {
             return;
         };
         let Some(identity) = &entry.target_identity else {
-            self.notice = Some("缺少确切主应用实例，无法请求退出。".into());
+            self.notice = Some(
+                "The exact main application instance is missing; no quit request can be sent."
+                    .into(),
+            );
             return;
         };
         self.confirmation = Some(RuleConfirmation::Exit {
@@ -478,13 +491,14 @@ impl App {
         self.reload_policy();
         if !cleanup::enabled() {
             self.notice = Some(
-                "正常退出能力尚未启用，暂无可自动处理的对象；没有发送任何请求。P 可查看只读预演。"
+                "Normal quit is disabled; no automatic targets and no requests sent. P opens a read-only preview."
                     .into(),
             );
             return;
         }
         if self.policy_error.is_some() || self.store.is_none() {
-            self.notice = Some("规则存储不可读取，当前禁止清理；S 可查看原因。".into());
+            self.notice =
+                Some("Rules cannot be read; cleanup is disabled. S opens Settings.".into());
             return;
         }
         if self
@@ -492,7 +506,7 @@ impl App {
             .as_ref()
             .is_none_or(|plan| plan.automatic_count == 0)
         {
-            self.notice = Some("暂无可自动处理的对象，没有发送请求。可在详情主动设置允许规则，或按 P 查看分类理由。".into());
+            self.notice = Some("No automatic targets; no requests sent. Add an Allow rule in Details, or press P to see the reasons.".into());
             return;
         }
         if let Some(snapshot) = self.snapshot.clone() {
@@ -502,7 +516,9 @@ impl App {
 
     fn start_cleanup(&mut self, snapshot: Snapshot, mode: CleanupMode) {
         let Some(store) = self.store.clone() else {
-            self.notice = Some("清理未开始：记录存储不可用；没有发送退出请求。".into());
+            self.notice = Some(
+                "Cleanup not started: history storage unavailable; no quit requests sent.".into(),
+            );
             return;
         };
         match Session::start(store, snapshot, mode) {
@@ -515,7 +531,7 @@ impl App {
             }
             Err(error) => {
                 self.notice = Some(format!(
-                    "清理未开始：{}；没有扩大到其他实例。",
+                    "Cleanup not started: {}; no other instance was included.",
                     safe_text(&error)
                 ))
             }
@@ -570,7 +586,7 @@ impl App {
             .and_then(|index| self.history.get(index))
             .map(|item| item.run_id.clone());
         let Some(store) = &self.store else {
-            self.history_error = Some("记录存储不可用".into());
+            self.history_error = Some("History storage unavailable".into());
             return;
         };
         match history::load(store, 50) {
@@ -600,7 +616,10 @@ impl App {
         self.reload_policy();
         if self.policy_error.is_some() {
             self.confirmation = None;
-            self.notice = Some("规则状态读取失败，保存已取消；保持只读。请查看设置页原因。".into());
+            self.notice = Some(
+                "Cannot read rule state; save cancelled, read-only mode. See Settings for details."
+                    .into(),
+            );
             return;
         }
         let Some(confirmation) = self.confirmation.take() else {
@@ -619,12 +638,15 @@ impl App {
                 self.policy = state;
                 self.reload_policy();
                 self.reconcile_selection();
-                self.notice = Some("规则已保存。这里只改变后续分类，不会向应用发送退出请求。可在设置页移除该规则。".into());
+                self.notice = Some("Rule saved. This changes future classification only; no quit request is sent. Remove the rule in Settings.".into());
             }
             Err(error) => {
                 self.policy_error = Some(safe_text(&error));
                 self.evaluate_policy();
-                self.notice = Some(format!("规则保存失败，保持只读：{}", safe_text(&error)));
+                self.notice = Some(format!(
+                    "Rule save failed; read-only mode: {}",
+                    safe_text(&error)
+                ));
             }
         }
     }
@@ -658,7 +680,7 @@ impl App {
             return;
         }
         let Some(store) = &self.store else {
-            self.preview_error = Some("规则存储不可用".into());
+            self.preview_error = Some("Rule storage unavailable".into());
             self.preview_plan = Some(fallback());
             return;
         };
@@ -679,7 +701,7 @@ impl App {
                     },
                 ));
                 self.notice = Some(format!(
-                    "预演未完成：{}。本阶段不发送退出请求。",
+                    "Preview incomplete: {}. No quit requests are sent.",
                     safe_text(&error)
                 ));
             }
@@ -766,7 +788,7 @@ impl App {
                 if self.start_cleanup_after_sample {
                     self.start_cleanup_after_sample = false;
                     self.notice = Some(format!(
-                        "清理未开始：采样失败：{}；没有发送退出请求。",
+                        "Cleanup not started: sampling failed: {}; no quit requests sent.",
                         safe_text(&error)
                     ));
                 }
@@ -774,7 +796,7 @@ impl App {
                     && self.preview_plan.is_none()
                     && !self.preview_refresh_queued
                 {
-                    self.preview_error = Some(format!("采样失败：{}", safe_text(&error)));
+                    self.preview_error = Some(format!("Sampling failed: {}", safe_text(&error)));
                 }
             }
         }
@@ -884,7 +906,7 @@ impl App {
             }
             KeyCode::Esc if self.start_cleanup_after_sample => {
                 self.start_cleanup_after_sample = false;
-                self.notice = Some("已取消清理准备，没有发送退出请求。".into());
+                self.notice = Some("Cleanup preparation cancelled; no quit requests sent.".into());
             }
             KeyCode::Esc => match self.page {
                 Page::Detail(_) => {
@@ -1094,7 +1116,7 @@ fn refresh(app: &mut App, worker: &mut Option<Worker>) -> Result<(), String> {
         .unwrap()
         .request
         .send(Request::Refresh)
-        .map_err(|_| "采集线程已退出，终端将恢复。".to_string())
+        .map_err(|_| "The sampling worker stopped; the terminal will be restored.".to_string())
 }
 
 /// Enter an interactive UI. Only resources/watch refresh periodically; the home page stays idle.
@@ -1111,15 +1133,17 @@ pub fn run_clean() -> Result<bool, String> {
 
 fn run_internal(watch: bool, interval: Duration, clean: bool) -> Result<bool, String> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return Err("交互界面需要 TTY；请使用 bree status --json 或 bree list --json。".into());
+        return Err(
+            "The interactive UI requires a TTY. Use bree status --json or bree list --json.".into(),
+        );
     }
     // With ctrlc's `termination` feature this also handles external SIGTERM/SIGHUP.
     // Raw-mode Ctrl+C remains a key event. The CLI must not install another handler for TUI.
     ctrlc::set_handler(|| exit_for_external_signal())
-        .map_err(|error| format!("无法设置终端中断恢复：{error}"))?;
+        .map_err(|error| format!("Cannot register terminal interrupt recovery: {error}"))?;
     let guard = TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))
-        .map_err(|error| format!("无法创建终端界面：{error}"))?;
+        .map_err(|error| format!("Cannot create the terminal UI: {error}"))?;
     let mut app = App::new(watch);
     app.start_cleanup_after_sample = clean;
     app.refresh_interval = interval.max(Duration::from_millis(100));
@@ -1158,7 +1182,9 @@ fn run_loop(
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    return Err("采集线程意外退出，终端已恢复。".into());
+                    return Err(
+                        "The sampling worker stopped unexpectedly; terminal restored.".into(),
+                    );
                 }
             }
         }
@@ -1176,7 +1202,7 @@ fn run_loop(
         if redraw {
             terminal
                 .draw(|frame| render(frame, app))
-                .map_err(|error| format!("终端绘制失败：{error}"))?;
+                .map_err(|error| format!("Terminal draw failed: {error}"))?;
             redraw = false;
         }
         // Blocking poll avoids a rendering/animation loop while still receiving worker data.
@@ -1189,8 +1215,8 @@ fn run_loop(
         } else {
             Duration::from_millis(500)
         };
-        if event::poll(timeout).map_err(|error| format!("终端事件读取失败：{error}"))? {
-            match event::read().map_err(|error| format!("终端事件读取失败：{error}"))? {
+        if event::poll(timeout).map_err(|error| format!("Cannot read terminal events: {error}"))? {
+            match event::read().map_err(|error| format!("Cannot read terminal events: {error}"))? {
                 Event::Key(key) => {
                     match app.handle(key) {
                         InputResult::Quit(cancelled) => return Ok(cancelled),
@@ -1208,37 +1234,37 @@ fn run_loop(
 
 fn category_name(category: Category) -> &'static str {
     match category {
-        Category::Application => "应用",
-        Category::AiDevelopment => "AI / 开发",
-        Category::System => "系统",
-        Category::Unknown => "归属未知",
+        Category::Application => "Apps",
+        Category::AiDevelopment => "AI / Dev",
+        Category::System => "System",
+        Category::Unknown => "Unknown",
     }
 }
 
 fn action_name(action: RuleAction) -> &'static str {
     match action {
-        RuleAction::Allow => "允许",
-        RuleAction::Protect => "保护",
+        RuleAction::Allow => "Allow",
+        RuleAction::Protect => "Protect",
     }
 }
 
 fn disposition_name(disposition: Disposition) -> &'static str {
     match disposition {
-        Disposition::Automatic => "自动候选",
-        Disposition::Pending => "待确认",
-        Disposition::Protected => "保护",
+        Disposition::Automatic => "Automatic",
+        Disposition::Pending => "Needs review",
+        Disposition::Protected => "Protected",
     }
 }
 
 fn scope_lines(scope: &AppScope) -> Vec<Line<'static>> {
     vec![
         Line::from(format!("Bundle ID: {}", safe_text(&scope.bundle_id))),
-        Line::from(format!("安装位置: {}", safe_text(&scope.bundle_path))),
+        Line::from(format!("Installation: {}", safe_text(&scope.bundle_path))),
         Line::from(format!(
-            "主可执行文件: {}",
+            "Main executable: {}",
             safe_text(&scope.executable_path)
         )),
-        Line::from("规则只匹配以上确切安装，不使用名称、PID 或通配范围。"),
+        Line::from("Rules match this exact installation; names, PIDs and wildcards are not used."),
     ]
 }
 
@@ -1260,26 +1286,29 @@ fn render_settings(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         Constraint::Length(3),
     ])
     .split(area);
-    frame.render_widget(Paragraph::new(title("设置 · 允许与保护规则")), chunks[0]);
+    frame.render_widget(
+        Paragraph::new(title("Settings · Allow / Protect")),
+        chunks[0],
+    );
     let status = match &app.policy_error {
         Some(error) => format!(
-            "规则读取失败，当前只读：{}\n禁用保存与撤销，不会覆盖原文件；R 重新读取。",
+            "Cannot read rules; read-only: {}\nSave and remove are disabled. Original file preserved. R reloads.",
             safe_text(error)
         ),
         None => format!(
-            "{} 条规则 · 修订 {} · 保护覆盖允许\n规则来自用户主动设置。{}",
+            "{} rules · rev {} · Protect overrides Allow\n{}",
             app.policy.rules.len(),
             app.policy.revision,
             if cleanup::enabled() {
-                "保存规则不会立即退出应用。"
+                "Saving a rule does not quit the application."
             } else {
-                "正常退出能力尚未启用。"
+                "Normal quit is disabled."
             }
         ),
     };
     frame.render_widget(Paragraph::new(status).wrap(Wrap { trim: false }), chunks[1]);
     if app.policy.rules.is_empty() {
-        frame.render_widget(Paragraph::new("尚无规则，自动候选可以为零。\n从对象详情按 A 设置允许、P 设置保护，并确认确切安装范围。\n规则设置不会立即退出应用。").wrap(Wrap { trim: false }), chunks[2]);
+        frame.render_widget(Paragraph::new("No rules yet; zero automatic targets is valid.\nIn Details, A allows and P protects. Confirm the exact installation.\nSetting a rule does not quit the application.").wrap(Wrap { trim: false }), chunks[2]);
     } else {
         let rules: Vec<_> = app
             .policy
@@ -1291,19 +1320,19 @@ fn render_settings(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                     action_name(rule.action),
                     safe_text(&rule.scope.bundle_id),
                     safe_text(&rule.scope.bundle_path),
-                    if rule.enabled { "" } else { " · 未启用" }
+                    if rule.enabled { "" } else { " · disabled" }
                 ))
             })
             .collect();
         frame.render_stateful_widget(
-            List::new(rules).highlight_symbol("> ").highlight_style(
-                Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED),
-            ),
+            List::new(rules)
+                .highlight_symbol(selection_marker())
+                .highlight_style(selection_style()),
             chunks[2],
             &mut app.rules,
         );
     }
-    frame.render_widget(Paragraph::new("↑↓ 选择  Enter 查看范围  D 移除选定规则\nR 重新读取  Esc 首页  Q 退出\n撤销只移除选定规则；不会恢复整份旧配置。").style(Style::default().add_modifier(Modifier::DIM)), chunks[3]);
+    frame.render_widget(Paragraph::new("↑↓ Select  Enter Scope  D Remove\nR Reload  Esc Home  Q Quit\nRemove affects this rule, not the old config.").style(Style::default().add_modifier(Modifier::DIM)), chunks[3]);
 }
 
 fn render_rule_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
@@ -1313,33 +1342,41 @@ fn render_rule_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect
         Constraint::Length(2),
     ])
     .split(area);
-    frame.render_widget(Paragraph::new(title("规则范围")), chunks[0]);
+    frame.render_widget(Paragraph::new(title("Rule scope")), chunks[0]);
     let mut lines = Vec::new();
     if let Some(rule) = app.policy.rules.iter().find(|rule| rule.id == id) {
         lines.push(Line::styled(
-            format!("{}规则 · {}", action_name(rule.action), safe_text(&rule.id)),
+            format!(
+                "{} rule · {}",
+                action_name(rule.action),
+                safe_text(&rule.id)
+            ),
             Style::default().fg(ACCENT),
         ));
         lines.extend(scope_lines(&rule.scope));
         lines.push(Line::from(format!(
-            "来源 {} · 状态 {} · 创建 UTC 毫秒 {}",
+            "Source {} · {} · created UTC ms {}",
             safe_text(&rule.source),
-            if rule.enabled { "启用" } else { "停用" },
+            if rule.enabled { "Enabled" } else { "Disabled" },
             rule.created_at_unix_ms
         )));
-        lines.push(Line::from("保存或查看规则不会立即触发退出请求。"));
+        lines.push(Line::from(
+            "Saving or viewing rules sends no quit requests.",
+        ));
     } else {
-        lines.push(Line::from("此规则已移除；Esc 返回设置。"));
+        lines.push(Line::from(
+            "This rule was removed. Esc returns to Settings.",
+        ));
     }
     if let Some(error) = &app.policy_error {
         lines.push(Line::from(format!(
-            "规则读取失败，旧规则仅供查看：{}",
+            "Cannot read rules; old rules shown for reference: {}",
             safe_text(error)
         )));
     }
     render_scrolled(frame, lines, chunks[1], &mut app.detail_scroll);
     frame.render_widget(
-        Paragraph::new("D 移除这条规则  ↑↓/PgDn 滚动\nR 重新读取  Esc 设置  Q 退出")
+        Paragraph::new("D Remove rule  ↑↓/PgDn Scroll\nR Reload  Esc Settings  Q Quit")
             .style(Style::default().add_modifier(Modifier::DIM)),
         chunks[2],
     );
@@ -1353,25 +1390,25 @@ fn render_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     ])
     .split(area);
     frame.render_widget(
-        Paragraph::new(title("清理预演 · 不发送退出请求")),
+        Paragraph::new(title("Preview · No quit requests")),
         chunks[0],
     );
     let mut lines = Vec::new();
     if let Some(plan) = &app.preview_plan {
         lines.push(Line::styled(
             format!(
-                "自动候选 {} · 待确认 {} · 保护 {}",
+                "Automatic {} · Needs review {} · Protected {}",
                 plan.automatic_count, plan.pending_count, plan.protected_count
             ),
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ));
         lines.push(Line::from(if cleanup::enabled() {
-            "此页不发送退出请求；实际执行前仍会重验实例、保护与前台状态。"
+            "No quit requests here. Execution rechecks the instance, protection and frontmost state."
         } else {
-            "A1 退出能力尚未开放；允许规则只参与分类。自动候选为零是合法结果。"
+            "Normal quit is disabled. Allow rules affect classification only; zero automatic targets is valid."
         }));
         lines.push(Line::from(format!(
-            "计划 {} · 规则修订 {} · 生成 UTC 毫秒 {}",
+            "Plan {} · rule revision {} · created UTC ms {}",
             safe_text(&plan.plan_id),
             plan.rule_revision,
             plan.created_at_unix_ms
@@ -1380,30 +1417,33 @@ fn render_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             lines.push(Line::from(sample.clone()));
         }
         lines.push(Line::from(
-            "这是按以上采样和规则冻结的预演；R 重新采样，资源变化不自动更新此页。",
+            "This preview freezes the sample and rules. R samples again; resource changes do not update this page.",
         ));
         if plan.rule_revision != app.policy.revision {
             lines.push(Line::styled(
-                "规则已变更；当前预演为旧修订，按 R 重新预演。",
+                "Rules changed; preview uses an old revision. R rebuilds the preview.",
                 Style::default().fg(ACCENT),
             ));
         }
         if app.error.is_some() {
             lines.push(Line::styled(
-                "刷新失败；以上为旧采样。",
+                "Refresh failed; the previous sample is shown.",
                 Style::default().fg(ACCENT),
             ));
         }
         if let Some(error) = &app.policy_error {
             lines.push(Line::styled(
-                format!("规则不可读取，保持保护与只读：{}", safe_text(error)),
+                format!(
+                    "Rules unreadable; protected, read-only mode: {}",
+                    safe_text(error)
+                ),
                 Style::default().fg(ACCENT),
             ));
         }
         if let Some(error) = &app.preview_error {
             lines.push(Line::styled(
                 format!(
-                    "预演未完成：{}；以下为保守解释，未记录成功预演。",
+                    "Preview incomplete: {}; conservative reasons shown, no successful preview recorded.",
                     safe_text(error)
                 ),
                 Style::default().fg(ACCENT),
@@ -1426,25 +1466,30 @@ fn render_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         }
     } else if let Some(error) = &app.preview_error {
         lines.push(Line::styled(
-            format!("预演未完成：{}。R 重新采样后重试。", safe_text(error)),
+            format!(
+                "Preview incomplete: {}. R samples again to retry.",
+                safe_text(error)
+            ),
             Style::default().fg(ACCENT),
         ));
         lines.push(Line::from(
-            "没有新计划，也未记录成功预演；不会发送退出请求。",
+            "No new plan or successful preview recorded; no quit requests are sent.",
         ));
     } else if app.loading || app.preview_refresh_queued {
         lines.push(Line::from(
-            "正在采样，完成后生成一次新预演；不会发送退出请求。",
+            "Sampling for a new preview; no quit requests are sent.",
         ));
     } else {
         lines.push(Line::from(
-            "数据尚未读取，无法生成预演。R 刷新后重试；不会发送退出请求。",
+            "No data for a preview. R samples again; no quit requests are sent.",
         ));
     }
     render_scrolled(frame, lines, chunks[1], &mut app.detail_scroll);
     frame.render_widget(
-        Paragraph::new("↑↓/PgDn 滚动  R 重新采样并预演\nS 设置  Esc 首页  Q 退出 · 只读计划")
-            .style(Style::default().add_modifier(Modifier::DIM)),
+        Paragraph::new(
+            "↑↓/PgDn Scroll  R Rebuild preview\nS Settings  Esc Home  Q Quit · Read-only",
+        )
+        .style(Style::default().add_modifier(Modifier::DIM)),
         chunks[2],
     );
 }
@@ -1452,25 +1497,25 @@ fn render_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
 fn result_lines(result: &CleanupResult) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(format!(
-            "运行 {} · 规则修订 {}",
+            "Run {} · rule revision {}",
             safe_text(&result.run_id),
             result.rule_revision
         )),
-        Line::from(format!("计划 {}", safe_text(&result.plan_id))),
+        Line::from(format!("Plan {}", safe_text(&result.plan_id))),
     ];
     if result.cancelled {
         lines.push(Line::styled(
-            "本次已取消；已发送的请求无法撤回，未核验状态会明确保留。",
+            "Cancelled. Sent requests cannot be recalled; unverified outcomes remain explicit.",
             Style::default().fg(ACCENT),
         ));
     }
     lines.push(Line::from(""));
     lines.push(Line::styled(
-        "应用退出结果",
+        "Application quit outcomes",
         Style::default().add_modifier(Modifier::BOLD),
     ));
     if result.targets.is_empty() {
-        lines.push(Line::from("没有处理目标，没有发送退出请求。"));
+        lines.push(Line::from("No targets; no quit requests sent."));
     }
     for target in &result.targets {
         lines.push(Line::styled(
@@ -1478,29 +1523,29 @@ fn result_lines(result: &CleanupResult) -> Vec<Line<'static>> {
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ));
         lines.push(Line::from(format!(
-            "{} · 观察 {} ms",
+            "{} · observed {} ms",
             if target.request_sent {
-                "已发送正常退出请求"
+                "Normal quit request sent"
             } else {
-                "未发送请求"
+                "No request sent"
             },
             target.observed_ms
         )));
         if let Some(identity) = &target.identity {
             lines.push(Line::from(format!(
-                "确切实例 {}",
+                "Exact instance {}",
                 safe_text(&identity.object_id())
             )));
         }
-        lines.push(Line::from(format!("依据：{}", safe_text(&target.reason))));
+        lines.push(Line::from(format!("Reason: {}", safe_text(&target.reason))));
         lines.push(Line::from(""));
     }
     lines.push(Line::styled(
-        "系统资源观察",
+        "System resource observations",
         Style::default().add_modifier(Modifier::BOLD),
     ));
     lines.push(Line::from(format!(
-        "操作前：已用 {} · 压力 {} · 压缩 {} · 交换 {}",
+        "Before: used {} · pressure {} · compressed {} · swap {}",
         metric_bytes(&result.resource_before.used_bytes),
         pressure_text(&result.resource_before.pressure),
         metric_bytes(&result.resource_before.compressed_bytes),
@@ -1508,22 +1553,24 @@ fn result_lines(result: &CleanupResult) -> Vec<Line<'static>> {
     )));
     if let Some(after) = &result.resource_after {
         lines.push(Line::from(format!(
-            "操作后：已用 {} · 压力 {} · 压缩 {} · 交换 {}",
+            "After: used {} · pressure {} · compressed {} · swap {}",
             metric_bytes(&after.used_bytes),
             pressure_text(&after.pressure),
             metric_bytes(&after.compressed_bytes),
             metric_bytes(&after.swap_used_bytes)
         )));
     } else {
-        lines.push(Line::from("操作后：未取得资源采样，不能判断改善情况。"));
+        lines.push(Line::from(
+            "After: no resource sample; improvement cannot be assessed.",
+        ));
     }
     lines.push(Line::from(safe_text(&result.resource_observation)));
     lines.push(Line::from(
-        "内存或压力没有改善也是合法结果；系统变化不等于本次操作保证释放的内存。",
+        "No improvement is a valid result. System changes are not a guarantee of memory freed by this run.",
     ));
     for error in &result.errors {
         lines.push(Line::styled(
-            format!("记录 / 观察错误：{}", safe_text(error)),
+            format!("History / observation error: {}", safe_text(error)),
             Style::default().fg(ACCENT),
         ));
     }
@@ -1537,7 +1584,7 @@ fn render_executing(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         Constraint::Length(2),
     ])
     .split(area);
-    frame.render_widget(Paragraph::new(title("正常退出 · 执行与观察")), chunks[0]);
+    frame.render_widget(Paragraph::new(title("Normal quit · Progress")), chunks[0]);
     let mut lines = Vec::new();
     if let Some(session) = &app.cleanup {
         lines.push(Line::styled(
@@ -1545,15 +1592,15 @@ fn render_executing(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ));
         lines.push(Line::from(format!(
-            "冻结计划 {} · 规则修订 {}",
+            "Frozen plan {} · rule revision {}",
             safe_text(&session.plan().plan_id),
             session.plan().rule_revision
         )));
         lines.push(Line::from(
-            "每个请求前重新核验确切实例、安装、保护与前台状态。",
+            "Each request rechecks the exact instance, installation, protection and frontmost state.",
         ));
         lines.push(Line::from(
-            "观察最多 15 秒；拒绝或仍在运行不会触发强制结束。",
+            "Observe for up to 15 s. Refusal or continued running never triggers force quit.",
         ));
         lines.push(Line::from(""));
         for target in session.targets() {
@@ -1564,20 +1611,20 @@ fn render_executing(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             lines.push(Line::from(format!(
                 "{} · {}",
                 if target.request_sent {
-                    "请求已发送"
+                    "Request sent"
                 } else {
-                    "未发送请求"
+                    "No request sent"
                 },
                 safe_text(&target.reason)
             )));
             lines.push(Line::from(""));
         }
     } else {
-        lines.push(Line::from("执行会话已结束；Esc 返回首页。"));
+        lines.push(Line::from("Execution ended. Esc returns Home."));
     }
     render_scrolled(frame, lines, chunks[1], &mut app.detail_scroll);
     frame.render_widget(
-        Paragraph::new("Ctrl+C / Esc 取消当次，停止后续请求\nQ 先取消再退出 · 不会重放动作")
+        Paragraph::new("Ctrl+C / Esc Cancel; stop further requests\nQ Cancel and quit · Actions are not replayed")
             .style(Style::default().add_modifier(Modifier::DIM)),
         chunks[2],
     );
@@ -1590,27 +1637,29 @@ fn render_results(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         Constraint::Length(2),
     ])
     .split(area);
-    frame.render_widget(Paragraph::new(title("处理结果")), chunks[0]);
+    frame.render_widget(Paragraph::new(title("Results")), chunks[0]);
     let lines = app
         .cleanup_result
         .as_ref()
         .map(result_lines)
-        .unwrap_or_else(|| vec![Line::from("没有完成结果；可在处理记录中查看未完成的运行。")]);
+        .unwrap_or_else(|| {
+            vec![Line::from(
+                "No completed result. History can show unfinished runs.",
+            )]
+        });
     render_scrolled(frame, lines, chunks[1], &mut app.detail_scroll);
     frame.render_widget(
-        Paragraph::new(
-            "↑↓ / PgUp / PgDn 滚动\nEsc 首页  S 设置  Q 退出 · 退出状态与资源观察分别记录",
-        )
-        .style(Style::default().add_modifier(Modifier::DIM)),
+        Paragraph::new("↑↓ / PgUp / PgDn Scroll\nEsc Home  S Settings  Q Quit")
+            .style(Style::default().add_modifier(Modifier::DIM)),
         chunks[2],
     );
 }
 
 fn history_status(status: &str) -> String {
     match status {
-        "finished" => "已完成".into(),
-        "cancelled" => "已取消".into(),
-        "unfinished" => "未完成".into(),
+        "finished" => "Finished".into(),
+        "cancelled" => "Cancelled".into(),
+        "unfinished" => "Unfinished".into(),
         other => safe_text(other),
     }
 }
@@ -1623,21 +1672,21 @@ fn render_history(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         Constraint::Length(2),
     ])
     .split(area);
-    frame.render_widget(Paragraph::new(title("处理记录 · 最近运行")), chunks[0]);
+    frame.render_widget(Paragraph::new(title("History · Recent runs")), chunks[0]);
     let status = match &app.history_error {
         Some(error) => format!(
-            "记录读取失败：{}\n以下缓存记录可能过期；R 重试，不会重放动作。",
+            "History read failed: {}\nCached records may be stale. R retries; actions are not replayed.",
             safe_text(error)
         ),
         None => format!(
-            "{} 条运行记录 · 默认保留 7 天、总量上限 10 MiB\n完成与未完成分别显示；查看记录不会重新执行。",
+            "{} runs · retained for 7 days, up to 10 MiB\nFinished and unfinished shown separately. Viewing never executes a run.",
             app.history.len()
         ),
     };
     frame.render_widget(Paragraph::new(status).wrap(Wrap { trim: false }), chunks[1]);
     if app.history.is_empty() {
         frame.render_widget(
-            Paragraph::new("暂无清理运行记录。规则与只读预演日志不会被当作真实退出结果。")
+            Paragraph::new("No cleanup runs yet. Rule and preview logs are not quit outcomes.")
                 .wrap(Wrap { trim: false }),
             chunks[2],
         );
@@ -1648,12 +1697,12 @@ fn render_history(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             .map(|item| {
                 ListItem::new(vec![
                     Line::from(format!(
-                        "{} · {} · UTC 毫秒 {}",
+                        "{} · {} · UTC ms {}",
                         history_status(&item.status),
                         if item.result.is_some() {
-                            "已记录结果"
+                            "Result recorded"
                         } else {
-                            "未完成 / 无最终结果"
+                            "Unfinished / no final result"
                         },
                         item.timestamp_unix_ms
                     )),
@@ -1666,18 +1715,16 @@ fn render_history(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             })
             .collect();
         frame.render_stateful_widget(
-            List::new(items).highlight_symbol("> ").highlight_style(
-                Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED),
-            ),
+            List::new(items)
+                .highlight_symbol(selection_marker())
+                .highlight_style(selection_style()),
             chunks[2],
             &mut app.history_selection,
         );
     }
     frame.render_widget(
-        Paragraph::new(
-            "↑↓ 选择  Enter 查看结果  R 重新读取\nEsc 首页  Q 退出 · 未完成运行不会重放",
-        )
-        .style(Style::default().add_modifier(Modifier::DIM)),
+        Paragraph::new("↑↓ Select  Enter Results  R Reload\nEsc Home  Q Quit · No replay")
+            .style(Style::default().add_modifier(Modifier::DIM)),
         chunks[3],
     );
 }
@@ -1689,12 +1736,12 @@ fn render_history_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: R
         Constraint::Length(2),
     ])
     .split(area);
-    frame.render_widget(Paragraph::new(title("运行记录详情")), chunks[0]);
+    frame.render_widget(Paragraph::new(title("Run details")), chunks[0]);
     let mut lines = Vec::new();
     if let Some(item) = app.history.iter().find(|item| item.run_id == id) {
         lines.push(Line::styled(
             format!(
-                "{} · UTC 毫秒 {}",
+                "{} · UTC ms {}",
                 history_status(&item.status),
                 item.timestamp_unix_ms
             ),
@@ -1705,26 +1752,30 @@ fn render_history_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: R
             lines.extend(result_lines(result));
         } else {
             lines.push(Line::from(format!(
-                "运行 {} 没有最终结果。",
+                "Run {} has no final result.",
                 safe_text(&item.run_id)
             )));
             lines.push(Line::from(
-                "无法确认上次已发送请求的最终退出状态；Bree 不会重放这次运行。",
+                "The final outcome of previously sent requests is unknown. Bree will not replay this run.",
             ));
         }
     } else {
-        lines.push(Line::from("此运行已不在最近记录中；Esc 返回列表。"));
+        lines.push(Line::from(
+            "This run is no longer in recent history. Esc returns to the list.",
+        ));
     }
     if let Some(error) = &app.history_error {
         lines.push(Line::styled(
-            format!("读取失败，当前为缓存记录：{}", safe_text(error)),
+            format!("Read failed; cached records shown: {}", safe_text(error)),
             Style::default().fg(ACCENT),
         ));
     }
     render_scrolled(frame, lines, chunks[1], &mut app.detail_scroll);
     frame.render_widget(
-        Paragraph::new("↑↓ / PgUp / PgDn 滚动  R 重新读取\nEsc 返回记录  Q 退出 · 只查看，不重放")
-            .style(Style::default().add_modifier(Modifier::DIM)),
+        Paragraph::new(
+            "↑↓ / PgUp / PgDn Scroll  R Reload\nEsc History  Q Quit · View only, no replay",
+        )
+        .style(Style::default().add_modifier(Modifier::DIM)),
         chunks[2],
     );
 }
@@ -1740,26 +1791,26 @@ fn render_confirmation(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             scope,
             name,
         } => {
-            lines.push(Line::from(format!("对象：{}", safe_text(name))));
+            lines.push(Line::from(format!("Target: {}", safe_text(name))));
             lines.extend(scope_lines(scope));
             lines.push(Line::from(""));
             lines.push(Line::from(
-                "这是持续规则，须主动确认；当前不会发送退出请求。保护规则优先。",
+                "This persistent rule requires confirmation. No quit requests are sent. Protect takes priority.",
             ));
-            format!(" 新建{}规则 ", action_name(*action))
+            format!(" New {} rule ", action_name(*action))
         }
         RuleConfirmation::Remove { id, action, scope } => {
             lines.push(Line::from(format!(
-                "移除{}规则 {}",
+                "Remove {} rule {}",
                 action_name(*action),
                 safe_text(id)
             )));
             lines.extend(scope_lines(scope));
             lines.push(Line::from(""));
             lines.push(Line::from(
-                "只移除这一条规则，不恢复旧配置，也不会退出应用。",
+                "Remove only this rule; the old configuration is not restored and no application is asked to quit.",
             ));
-            " 撤销选定规则 ".into()
+            " Remove selected rule ".into()
         }
         RuleConfirmation::Exit {
             name,
@@ -1767,28 +1818,32 @@ fn render_confirmation(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             identity,
             ..
         } => {
-            lines.push(Line::from(format!("应用：{}", safe_text(name))));
+            lines.push(Line::from(format!("Application: {}", safe_text(name))));
             lines.extend(scope_lines(scope));
             lines.push(Line::from(format!(
-                "确切实例：{}",
+                "Exact instance: {}",
                 safe_text(&identity.object_id())
             )));
             lines.push(Line::from(format!(
-                "PID {} · 启动 {} 秒 + {} 微秒",
+                "PID {} · started {} s + {} µs",
                 identity.pid,
                 identity
                     .start_seconds
-                    .map_or_else(|| "未知".into(), |value| value.to_string()),
+                    .map_or_else(|| "unknown".into(), |value| value.to_string()),
                 identity
                     .start_microseconds
-                    .map_or_else(|| "未知".into(), |value| value.to_string())
+                    .map_or_else(|| "unknown".into(), |value| value.to_string())
             )));
             lines.push(Line::from(""));
-            lines.push(Line::from("仅对这个确切实例请求一次正常退出。"));
-            lines.push(Line::from("单次操作不新增允许规则。"));
-            lines.push(Line::from("拒绝或超时不会强退。"));
-            lines.push(Line::from("执行前重新核验；替代实例会跳过。"));
-            " 单次正常退出确认 ".into()
+            lines.push(Line::from(
+                "Request normal quit once for this exact instance.",
+            ));
+            lines.push(Line::from("This one-time action adds no Allow rule."));
+            lines.push(Line::from("Refusal or timeout never triggers force quit."));
+            lines.push(Line::from(
+                "Recheck before execution; a replacement instance will be skipped.",
+            ));
+            " Confirm normal quit ".into()
         }
     };
     let width = area.width.min(88);
@@ -1810,9 +1865,9 @@ fn render_confirmation(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     render_scrolled(frame, lines, chunks[0], &mut app.confirmation_scroll);
     frame.render_widget(
         Paragraph::new(if matches!(confirmation, RuleConfirmation::Exit { .. }) {
-            "Enter 请求正常退出  Esc 取消\n↑↓ / PgDn 查看完整安装与实例范围"
+            "Enter Request quit  Esc Cancel\n↑↓ / PgDn Review installation and instance"
         } else {
-            "Enter 确认保存  Esc 取消\n↑↓ / PgDn 查看完整安装范围"
+            "Enter Save rule  Esc Cancel\n↑↓ / PgDn Review installation scope"
         })
         .style(Style::default().add_modifier(Modifier::BOLD)),
         chunks[1],
@@ -1824,7 +1879,7 @@ fn since_sample(snapshot: &Snapshot) -> String {
     let seconds = snapshot.sampled_at_unix_ms / 1000;
     let day_seconds = seconds % 86_400;
     format!(
-        "采样 UTC {:02}:{:02}:{:02} · {} ms",
+        "Sample UTC {:02}:{:02}:{:02} · {} ms",
         day_seconds / 3600,
         (day_seconds % 3600) / 60,
         day_seconds % 60,
@@ -1846,50 +1901,31 @@ fn title(value: &str) -> Line<'_> {
 }
 
 fn brand_header(expanded: bool) -> Vec<Line<'static>> {
+    let brand = Style::default().fg(ACCENT).add_modifier(Modifier::BOLD);
     if !expanded {
-        return vec![
-            Line::from(vec![
-                Span::styled(" ( -.- ) ", Style::default().fg(ACCENT)),
-                Span::styled("bree", Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(
-                    " · 规则与预演",
-                    Style::default().add_modifier(Modifier::DIM),
-                ),
-            ]),
-            Line::from("看清内存占用，让每个选择都有依据。"),
-        ];
+        return vec![Line::styled("bree", brand), Line::from("")];
     }
-    // Plain terminal cells: the curled, sleeping mascot and lowercase wordmark
-    // need neither a patched font nor an image protocol.
-    let mascot = [
-        "      .-.._  z  ",
-        "     ( -.- )__  ",
-        "   .-'     `-.  ",
-        "  (   .----.  ) ",
-        "   `-(_  __)-'  ",
-        "      `----'    ",
-    ];
-    let wordmark = [
-        "  ▄             ",
-        "  █▄▄▄  ▄ ▄▄  ▄▄▄▄  ▄▄▄▄",
-        "  █  █  █▀   █▄▄▄█ █▄▄▄█",
-        "  █▄▄█  █     ▀▄▄▄  ▀▄▄▄",
+    // A compact lowercase wordmark uses ordinary terminal cells, with no subtitle.
+    [
+        "█▄▄▄  ▄ ▄▄  ▄▄▄▄  ▄▄▄▄",
+        "█  █  █▀   █▄▄▄█ █▄▄▄█",
+        "█▄▄█  █     ▀▄▄▄  ▀▄▄▄",
         "",
-        "  bree · 规则与预演",
-    ];
-    let mut lines: Vec<_> = mascot
-        .into_iter()
-        .zip(wordmark)
-        .map(|(mascot, wordmark)| {
-            Line::from(vec![
-                Span::styled(mascot, Style::default().fg(ACCENT)),
-                Span::styled(wordmark, Style::default().add_modifier(Modifier::BOLD)),
-            ])
-        })
-        .collect();
-    lines.push(Line::from(""));
-    lines.push(Line::from("看清内存占用，让每个选择都有依据。"));
-    lines
+    ]
+    .into_iter()
+    .map(|line| Line::styled(line, brand))
+    .collect()
+}
+
+fn selection_marker() -> Line<'static> {
+    Line::styled(
+        "> ",
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn selection_style() -> Style {
+    Style::default().fg(FOREGROUND).add_modifier(Modifier::BOLD)
 }
 
 fn render(frame: &mut Frame<'_>, app: &mut App) {
@@ -1900,7 +1936,7 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
     );
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         frame.render_widget(
-            Paragraph::new(if app.cleanup.is_some() { "bree · 正常退出观察\n请调整终端至至少 48 列 × 16 行。\nCtrl+C 取消当次，Q 先取消再退出" } else { "bree · 内存检查\n请调整终端至至少 48 列 × 16 行。\nQ 或 Ctrl+C 退出" })
+            Paragraph::new(if app.cleanup.is_some() { "bree · Quit observation\nResize to at least 48 columns × 16 rows.\nCtrl+C Cancel  Q Cancel and quit" } else { "bree · Memory\nResize to at least 48 columns × 16 rows.\nQ or Ctrl+C Quit" })
                 .wrap(Wrap { trim: false })
                 .style(Style::default().fg(ACCENT)),
             area,
@@ -1934,11 +1970,11 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
         );
         frame.render_widget(Clear, popup);
         frame.render_widget(
-            Paragraph::new(format!("{}\n\nEnter / Esc 返回", safe_text(notice)))
+            Paragraph::new(format!("{}\n\nEnter / Esc Back", safe_text(notice)))
                 .style(Style::default().fg(FOREGROUND).bg(BACKGROUND))
                 .block(
                     Block::bordered()
-                        .title(" bree · 提示 ")
+                        .title(" Notice ")
                         .border_style(Style::default().fg(ACCENT)),
                 )
                 .wrap(Wrap { trim: false }),
@@ -1958,7 +1994,7 @@ fn render_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         5
     };
     let chunks = Layout::vertical([
-        Constraint::Length(if expanded { 8 } else { 2 }),
+        Constraint::Length(if expanded { 4 } else { 2 }),
         Constraint::Length(summary_height),
         Constraint::Min(4),
         Constraint::Length(2),
@@ -1966,56 +2002,63 @@ fn render_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     .split(area);
     frame.render_widget(Paragraph::new(brand_header(expanded)), chunks[0]);
     frame.render_widget(
-        Paragraph::new(summary(app)).wrap(Wrap { trim: false }),
+        Paragraph::new(summary(app, area.width < 76)).wrap(Wrap { trim: false }),
         chunks[1],
     );
     let pending = app.plan.as_ref().map_or_else(
-        || "分析中".into(),
-        |plan| format!("{} 项 · 查看理由", plan.pending_count),
+        || "Analyzing".into(),
+        |plan| format!("{} · See reasons", plan.pending_count),
     );
     let automatic = app.plan.as_ref().map_or(0, |plan| plan.automatic_count);
     let entries = [
         if !cleanup::enabled() {
-            "1. 一键清理       正常退出能力未启用".into()
+            "1. Clean         Normal quit disabled".into()
         } else if automatic == 0 {
-            "1. 一键清理       暂无可处理对象".into()
+            "1. Clean         No automatic targets".into()
         } else {
-            format!("1. 一键清理       {automatic} 个允许的确切实例")
+            format!("1. Clean         {automatic} allowed instances")
         },
-        format!("2. 待确认项目     {pending}"),
-        "3. 全部内存占用   按应用分组查看".into(),
-        "4. 处理记录       查看完成与未完成记录".into(),
+        format!("2. Needs review  {pending}"),
+        "3. Memory        Grouped by application".into(),
+        "4. History       Completed / unfinished".into(),
     ];
     let list = List::new(entries.map(ListItem::new))
-        .highlight_symbol("> ")
-        .highlight_style(
-            Style::default()
-                .fg(FOREGROUND)
-                .bg(SELECTED)
-                .add_modifier(Modifier::BOLD | Modifier::REVERSED),
-        );
+        .highlight_symbol(selection_marker())
+        .highlight_style(selection_style());
     frame.render_stateful_widget(list, chunks[2], &mut app.menu);
     frame.render_widget(
-        Paragraph::new("↑↓ / 1–4 选择  Enter 进入  R 刷新\nP 只读预演  S 设置  Q 退出 · 首页静置")
+        Paragraph::new("↑↓ / 1–4 Select  Enter Open  R Refresh\nP Preview  S Settings  Q Quit")
             .style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)),
         chunks[3],
     );
 }
 
-fn summary(app: &App) -> Text<'static> {
+fn display_memory(metric: &crate::model::Metric<u64>, compact: bool) -> String {
+    if compact && (metric.status != crate::model::Validity::Ok || metric.value.is_none()) {
+        if metric.status == crate::model::Validity::Denied {
+            "Denied".into()
+        } else {
+            "Unknown".into()
+        }
+    } else {
+        metric_bytes(metric)
+    }
+}
+
+fn summary(app: &App, compact: bool) -> Text<'static> {
     let Some(snapshot) = &app.snapshot else {
         let message = if let Some(error) = &app.error {
             format!(
-                "读取失败：{}\nR 重试；未知数据不作为零占用。",
+                "Read failed; R retries.\nUnknown memory is not zero.\n{}",
                 safe_text(error)
             )
         } else {
             format!(
-                "分析中…\n正在读取真实内存数据，{}。",
+                "Analyzing…\nReading real memory data; {}.",
                 if cleanup::enabled() {
-                    "清理只处理明确允许的普通应用"
+                    "cleanup requires explicitly allowed apps"
                 } else {
-                    "退出操作尚未启用"
+                    "normal quit is disabled"
                 }
             )
         };
@@ -2024,7 +2067,7 @@ fn summary(app: &App) -> Text<'static> {
     let mut lines = vec![
         Line::from(vec![
             Span::styled(
-                "内存压力：",
+                "Memory pressure: ",
                 Style::default().fg(MUTED).add_modifier(Modifier::DIM),
             ),
             Span::styled(
@@ -2033,36 +2076,40 @@ fn summary(app: &App) -> Text<'static> {
             ),
         ]),
         Line::from(format!(
-            "已用 {} / 总量 {}",
-            metric_bytes(&snapshot.system.used_bytes),
-            metric_bytes(&snapshot.system.total_bytes)
+            "Used {} / Total {}",
+            display_memory(&snapshot.system.used_bytes, compact),
+            display_memory(&snapshot.system.total_bytes, compact)
         )),
         Line::from(format!(
-            "压缩 {} · 交换空间 {}",
-            metric_bytes(&snapshot.system.compressed_bytes),
-            metric_bytes(&snapshot.system.swap_used_bytes)
+            "Compressed {} · Swap {}",
+            display_memory(&snapshot.system.compressed_bytes, compact),
+            display_memory(&snapshot.system.swap_used_bytes, compact)
         )),
         Line::from(format!(
-            "{} · 覆盖 {}/{} 进程",
-            since_sample(snapshot),
+            "{} · {}/{} read",
+            since_sample(snapshot).replace("Sample ", ""),
             snapshot.coverage.readable_memory_processes,
             snapshot.coverage.enumerated_processes
         )),
     ];
     if let Some(error) = &app.error {
         lines.push(Line::styled(
-            format!("刷新失败：{}；以上为旧数据", safe_text(error)),
+            if compact {
+                "Previous data · Refresh failed; R retry".into()
+            } else {
+                format!("Previous data · Refresh failed: {}", safe_text(error))
+            },
             Style::default().fg(ACCENT),
         ));
     } else if app.loading {
         lines.push(Line::styled(
-            "刷新中 · 以上为上次采样",
+            "Refreshing · Previous sample shown",
             Style::default().fg(MUTED).add_modifier(Modifier::DIM),
         ));
     }
     if app.policy_error.is_some() {
         lines.push(Line::styled(
-            "规则不可读取 · S 查看原因 · 保持只读",
+            "Rules unreadable · S Settings · Read-only",
             Style::default().fg(ACCENT),
         ));
     }
@@ -2080,30 +2127,29 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         Constraint::Length(3),
     ])
     .split(area);
-    frame.render_widget(Paragraph::new(title("全部内存占用")), chunks[0]);
+    frame.render_widget(Paragraph::new(title("Memory")), chunks[0]);
     let status = if let Some(snapshot) = &app.snapshot {
-        let suffix = if app.error.is_some() {
-            " · 刷新失败，旧数据"
+        let sample = if app.error.is_some() {
+            "Previous data · Refresh failed; R retry".into()
         } else if app.loading {
-            " · 刷新中"
+            "Refreshing · Previous sample shown".into()
         } else {
-            ""
+            since_sample(snapshot)
         };
         format!(
-            "压力 {} · 已用 {} / {}\n{}{}",
+            "{} · Used {} / {}\n{}",
             pressure_text(&snapshot.system.pressure),
-            metric_bytes(&snapshot.system.used_bytes),
-            metric_bytes(&snapshot.system.total_bytes),
-            since_sample(snapshot),
-            suffix
+            display_memory(&snapshot.system.used_bytes, compact),
+            display_memory(&snapshot.system.total_bytes, compact),
+            sample
         )
     } else if let Some(error) = &app.error {
-        format!("读取失败：{} · R 重试", safe_text(error))
+        format!("Read failed: {} · R Retry", safe_text(error))
     } else {
-        "分析中… 正在读取真实进程占用".into()
+        "Analyzing… Reading real process memory".into()
     };
     frame.render_widget(Paragraph::new(status).wrap(Wrap { trim: false }), chunks[1]);
-    let tabs = Tabs::new(["全部", "应用", "AI/开发", "系统", "待确认"])
+    let tabs = Tabs::new(["All", "Apps", "AI/Dev", "System", "Review"])
         .select(app.filter.index())
         .highlight_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
         .divider(" ")
@@ -2113,15 +2159,15 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let groups = app.groups();
     if groups.is_empty() {
         let message = if app.filter == Filter::Pending {
-            "当前预演没有待确认对象。\n保护对象仍可在全部占用中查看分类理由。"
+            "No objects need review in this preview.\nSee All for protected objects and their reasons."
         } else if app.filter == Filter::Ai {
-            "本次采样未匹配到可靠的开发工具安装证据。\n尚未覆盖的对象保留在全部占用中；不代表没有 AI 任务。"
+            "No reliable developer tool installation evidence matched this sample.\nUncovered objects remain in All; this does not prove there are no AI tasks."
         } else if app.loading && app.snapshot.is_none() {
-            "分析中…"
+            "Analyzing…"
         } else if app.error.is_some() && app.snapshot.is_none() {
-            "读取失败；按 R 重试。"
+            "Read failed. R retries."
         } else {
-            "此筛选下没有可显示的对象。"
+            "No objects in this filter."
         };
         frame.render_widget(
             Paragraph::new(message)
@@ -2136,10 +2182,10 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                 let mut values = if compact {
                     vec![
                         safe_text(&group.name),
-                        metric_bytes(&group.memory_bytes),
+                        display_memory(&group.memory_bytes, true),
                         group.process_ids.len().to_string(),
                         app.entry(&group.id)
-                            .map_or("未分类", |entry| disposition_name(entry.disposition))
+                            .map_or("Unclassified", |entry| disposition_name(entry.disposition))
                             .into(),
                     ]
                 } else {
@@ -2150,7 +2196,7 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                         category_name(group.category).into(),
                         safe_text(&group.metric_kind),
                         app.entry(&group.id)
-                            .map_or("未分类", |entry| disposition_name(entry.disposition))
+                            .map_or("Unclassified", |entry| disposition_name(entry.disposition))
                             .into(),
                     ]
                 };
@@ -2159,7 +2205,7 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                         app.entry(&group.id)
                             .and_then(|entry| entry.reasons.first())
                             .map(|reason| safe_text(reason))
-                            .unwrap_or_else(|| "等待分类".into()),
+                            .unwrap_or_else(|| "Awaiting classification".into()),
                     );
                 }
                 Row::new(values)
@@ -2167,56 +2213,53 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             .collect();
         let (mut header, mut widths) = if compact {
             (
-                vec!["名称", "占用", "实例", "预演"],
+                vec!["Name", "Memory", "Procs", "State"],
                 vec![
                     Constraint::Min(10),
-                    Constraint::Length(10),
+                    Constraint::Length(9),
                     Constraint::Length(5),
-                    Constraint::Length(8),
+                    Constraint::Length(12),
                 ],
             )
         } else {
             (
-                vec!["名称", "占用", "实例", "归属", "指标", "预演"],
+                vec!["Name", "Memory", "Procs", "Type", "Metric", "State"],
                 vec![
                     Constraint::Min(16),
                     Constraint::Length(12),
                     Constraint::Length(5),
                     Constraint::Length(11),
                     Constraint::Length(12),
-                    Constraint::Length(8),
+                    Constraint::Length(12),
                 ],
             )
         };
         if wide {
-            header.push("依据");
+            header.push("Reason");
             widths.push(Constraint::Min(26));
         }
         let table = Table::new(rows, widths)
             .header(Row::new(header).style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)))
-            .row_highlight_style(
-                Style::default()
-                    .fg(FOREGROUND)
-                    .bg(SELECTED)
-                    .add_modifier(Modifier::BOLD | Modifier::REVERSED),
-            )
-            .highlight_symbol("> ");
+            .row_highlight_style(selection_style())
+            .highlight_symbol(selection_marker());
         frame.render_stateful_widget(table, chunks[3], &mut app.table);
     }
     let footer = format!(
-        "↑↓ 选择  Enter 详情与完整理由  Tab 筛选  O:{}\nR 刷新  S 设置  Esc 首页  Q 退出 · {:.1}s 更新\n{}",
+        "↑↓ Select  Enter Details  Tab Filter\nO Sort R Refresh S Settings Esc Home Q Quit\n{} · {:.1}s refresh · {}",
         if app.sort == Sort::Memory {
-            "内存"
+            "Memory"
         } else {
-            "名称"
+            "Name"
         },
         app.refresh_interval.as_secs_f64(),
         app.selected_group
             .as_ref()
             .and_then(|id| app.entry(id))
             .and_then(|entry| entry.reasons.first())
-            .map(|reason| format!("理由：{}", safe_text(reason)))
-            .unwrap_or_else(|| "组内指标合计；不同指标分榜，非可回收内存。".into())
+            .map(|reason| format!("Reason: {}", safe_text(reason)))
+            .unwrap_or_else(|| {
+                "Group sum; different metrics stay separate. This is not recoverable memory.".into()
+            })
     );
     frame.render_widget(
         Paragraph::new(footer).style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)),
@@ -2226,14 +2269,14 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
 
 fn process_detail(process: &ProcessInfo) -> Vec<Line<'static>> {
     let protection = if process.protection_reasons.is_empty() {
-        "未检测到采集层保护标记；以上方预演分类及执行前重验为准".into()
+        "No collection protection marker; use preview classification and execution rechecks".into()
     } else {
         process
             .protection_reasons
             .iter()
             .map(|reason| safe_text(reason))
             .collect::<Vec<_>>()
-            .join("；")
+            .join("; ")
     };
     let attribution = &process.attribution;
     let application = attribution.application.as_ref();
@@ -2247,63 +2290,63 @@ fn process_detail(process: &ProcessInfo) -> Vec<Line<'static>> {
             Style::default().fg(ACCENT),
         ),
         Line::from(format!(
-            "占用 {} · 指标 {}",
+            "Memory {} · metric {}",
             metric_bytes(&process.memory_bytes),
             safe_text(&process.metric_kind)
         )),
         Line::from(format!(
-            "数据有效性 {:?} · 来源 {}",
+            "Validity {:?} · source {}",
             process.memory_bytes.status,
             safe_text(&process.memory_bytes.source)
         )),
-        Line::from(format!("实例 {}", safe_text(&process.id))),
+        Line::from(format!("Instance {}", safe_text(&process.id))),
         Line::from(format!(
-            "身份 {:?} · 启动 {} 秒 + {} 微秒",
+            "Identity {:?} · started {} s + {} µs",
             process.identity.status,
             process
                 .identity
                 .start_seconds
-                .map_or_else(|| "未知".into(), |value| value.to_string()),
+                .map_or_else(|| "unknown".into(), |value| value.to_string()),
             process
                 .identity
                 .start_microseconds
-                .map_or_else(|| "未知".into(), |value| value.to_string())
+                .map_or_else(|| "unknown".into(), |value| value.to_string())
         )),
         Line::from(format!(
-            "可执行位置 {}",
+            "Executable {}",
             process
                 .executable_path
                 .as_deref()
                 .map(safe_text)
-                .unwrap_or_else(|| "— / 不可读取".into())
+                .unwrap_or_else(|| "— / unavailable".into())
         )),
         Line::from(format!(
-            "归属 {} · 置信度 {}",
+            "Attribution {} · confidence {}",
             safe_text(&attribution.method),
             safe_text(&attribution.confidence)
         )),
         Line::from(safe_text(&attribution.explanation)),
-        Line::from(format!("保护 / 限制 {protection}")),
+        Line::from(format!("Protection / limits {protection}")),
     ];
     if let Some(application) = application {
         lines.push(Line::from(format!(
-            "应用 {} · Bundle {} · 前台 {}",
+            "Application {} · Bundle {} · frontmost {}",
             safe_text(&application.name),
             application
                 .bundle_id
                 .as_deref()
                 .map(safe_text)
-                .unwrap_or_else(|| "未知".into()),
-            if application.frontmost { "是" } else { "否" }
+                .unwrap_or_else(|| "unknown".into()),
+            if application.frontmost { "yes" } else { "no" }
         )));
         lines.push(Line::from(format!(
-            "应用位置 {}",
+            "Application path {}",
             safe_text(&application.bundle_path)
         )));
     }
     if let Some(cpu) = process.cpu_one_core_percent.value {
         lines.push(Line::from(format!(
-            "CPU {cpu:.1}%（单核）· 来源 {}",
+            "CPU {cpu:.1}% (one core) · source {}",
             safe_text(&process.cpu_one_core_percent.source)
         )));
     } else {
@@ -2314,29 +2357,29 @@ fn process_detail(process: &ProcessInfo) -> Vec<Line<'static>> {
                 .reason
                 .as_deref()
                 .map(safe_text)
-                .unwrap_or_else(|| "不可读取".into())
+                .unwrap_or_else(|| "unavailable".into())
         )));
     }
     if let Some(reason) = &process.memory_bytes.reason {
-        lines.push(Line::from(format!("读取说明 {}", safe_text(reason))));
+        lines.push(Line::from(format!("Read note {}", safe_text(reason))));
     }
     if let Some(label) = label_process(process) {
         lines.push(Line::styled(
-            format!("开发标签 {}", label.label),
+            format!("Developer label {}", label.label),
             Style::default().fg(ACCENT),
         ));
         lines.push(Line::from(format!(
-            "依据 {} · 置信度 {}",
+            "Evidence {} · confidence {}",
             safe_text(&label.evidence),
             label.confidence
         )));
-        lines.push(Line::from("标签仅解释归属，不代表任务完成或可以自动停止。"));
+        lines.push(Line::from("The label explains attribution, not task completion or permission to stop automatically."));
     }
     lines.push(Line::from(
         if cleanup::enabled() && process.quit_supported {
-            "支持操作：普通主应用可请求正常退出，须通过实例与保护重验。端口：尚未验证。"
+            "Actions: normal quit for a main application after identity and protection checks. Ports: unverified."
         } else {
-            "支持操作：只读查看；此实例正常退出未启用。端口：尚未验证。"
+            "Actions: read-only; normal quit is disabled for this instance. Ports: unverified."
         },
     ));
     lines.push(Line::from(""));
@@ -2350,7 +2393,7 @@ fn render_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
         Constraint::Length(2),
     ])
     .split(area);
-    frame.render_widget(Paragraph::new(title("对象详情 · 只读")), chunks[0]);
+    frame.render_widget(Paragraph::new(title("Details")), chunks[0]);
     let mut lines = Vec::new();
     if let Some(snapshot) = &app.snapshot {
         if let Some(group) = snapshot.groups.iter().find(|group| group.id == id) {
@@ -2359,13 +2402,13 @@ fn render_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             ));
             lines.push(Line::from(format!(
-                "占用 {} · {} 个进程 · {}",
+                "Memory {} · {} processes · {}",
                 metric_bytes(&group.memory_bytes),
                 group.process_ids.len(),
                 category_name(group.category)
             )));
             lines.push(Line::from(format!(
-                "指标 {} · 来源 {}",
+                "Metric {} · source {}",
                 safe_text(&group.metric_kind),
                 safe_text(&group.memory_bytes.source)
             )));
@@ -2373,7 +2416,7 @@ fn render_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
             lines.push(Line::from(since_sample(snapshot)));
             if let Some(entry) = app.entry(id) {
                 lines.push(Line::styled(
-                    format!("预演分类 {}", disposition_name(entry.disposition)),
+                    format!("Preview state {}", disposition_name(entry.disposition)),
                     Style::default().fg(ACCENT),
                 ));
                 for reason in &entry.reasons {
@@ -2381,17 +2424,19 @@ fn render_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
                 }
                 if !entry.matched_rule_ids.is_empty() {
                     lines.push(Line::from(format!(
-                        "匹配规则 {}",
+                        "Matched rules {}",
                         entry
                             .matched_rule_ids
                             .iter()
                             .map(|id| safe_text(id))
                             .collect::<Vec<_>>()
-                            .join("、")
+                            .join(", ")
                     )));
                 }
             }
-            lines.push(Line::from("组内指标合计，非保证释放量。此页面按需刷新。"));
+            lines.push(Line::from(
+                "Group sum is not guaranteed freed memory. Refresh on demand.",
+            ));
             lines.push(Line::from(""));
             for process_id in &group.process_ids {
                 if let Some(process) = snapshot
@@ -2404,17 +2449,17 @@ fn render_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
             }
         } else {
             lines.push(Line::from(
-                "此对象已不在最近采样中。旧实例不会映射到替代进程；Esc 返回列表。",
+                "This object is absent from the latest sample. Its old instance will not map to a replacement; Esc returns to the list.",
             ));
         }
         if let Some(error) = &app.error {
             lines.push(Line::styled(
-                format!("刷新失败：{}；当前为旧数据", safe_text(error)),
+                format!("Refresh failed: {}; previous data shown", safe_text(error)),
                 Style::default().fg(ACCENT),
             ));
         }
     } else {
-        lines.push(Line::from("数据尚未读取；按 R 重试。"));
+        lines.push(Line::from("No data yet. R retries."));
     }
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
     // Clamp against actual wrapped rows on every draw: refresh and resizing can
@@ -2427,9 +2472,9 @@ fn render_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
     frame.render_widget(paragraph.scroll((app.detail_scroll, 0)), chunks[1]);
     frame.render_widget(
         Paragraph::new(if cleanup::enabled() {
-            "A 允许  P 保护  E 单次退出  ↑↓/PgDn 滚动\nR 刷新  S 设置  Esc 返回  Q 退出"
+            "A Allow  P Protect  E Quit  ↑↓/PgDn Scroll\nR Refresh  S Settings  Esc Back  Q Quit"
         } else {
-            "A 允许  P 保护  E 退出未启用  ↑↓/PgDn 滚动\nR 刷新  S 设置 Esc 返回  Q 退出"
+            "A Allow  P Protect  E Disabled  ↑↓ Scroll\nR Refresh  S Settings  Esc Back  Q Quit"
         })
         .style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)),
         chunks[2],
@@ -2480,11 +2525,11 @@ mod tests {
                 category: Category::Application,
                 attribution: Attribution {
                     application: None,
-                    method: "测试".into(),
+                    method: "test".into(),
                     confidence: "high".into(),
-                    explanation: "已验证进程".into(),
+                    explanation: "Verified process".into(),
                 },
-                protection_reasons: vec!["前台使用中".into()],
+                protection_reasons: vec!["frontmost application".into()],
                 quit_supported: false,
             }],
             groups: vec![OccupancyGroup {
@@ -2494,7 +2539,7 @@ mod tests {
                 memory_bytes: Metric::ok(100 * 1024 * 1024, "test_rss"),
                 metric_kind: "rss".into(),
                 process_ids: vec![id],
-                explanation: "测试组".into(),
+                explanation: "Test group".into(),
             }],
             coverage: Coverage {
                 enumerated_processes: 1,
@@ -2575,7 +2620,7 @@ mod tests {
             }),
             method: "appkit_main_application".into(),
             confidence: "high".into(),
-            explanation: "AppKit 当前主实例".into(),
+            explanation: "Current AppKit main instance".into(),
         };
         sample.groups[0].id = format!("app:{}", process.id);
         sample
@@ -2586,8 +2631,8 @@ mod tests {
         let mut app = App::new(false);
         assert_eq!(app.menu.selected(), Some(2));
         let (text, _) = screen(&mut app, 90, 24);
-        assert!(text.contains("分析中"));
-        assert!(text.contains("> 3. 全部内存占用"));
+        assert!(text.contains("Analyzing"));
+        assert!(text.contains("> 3. Memory"));
         app.handle(key(KeyCode::Char('1')));
         assert!(matches!(
             app.handle(key(KeyCode::Enter)),
@@ -2600,7 +2645,7 @@ mod tests {
         app.handle(key(KeyCode::Char('p')));
         assert_eq!(app.page, Page::Preview);
         let (text, _) = screen(&mut app, 90, 24);
-        assert!(text.contains("不发送退出"));
+        assert!(text.contains("No quit requests"));
     }
 
     #[test]
@@ -2614,7 +2659,7 @@ mod tests {
         let (text, _) = screen(&mut app, 120, 40);
         assert!(text.contains("PID 123"));
         assert!(text.contains("私有路径"));
-        assert!(text.contains("前台使用中"));
+        assert!(text.contains("frontmost application"));
         app.handle(key(KeyCode::Esc));
         assert_eq!(app.page, Page::Resources);
     }
@@ -2628,7 +2673,7 @@ mod tests {
         terminal.backend_mut().resize(30, 10);
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         let text = buffer_text(terminal.backend().buffer());
-        assert!(text.contains("请调整终端"));
+        assert!(text.contains("Resize"));
         assert!(text.contains("Ctrl+C"));
     }
 
@@ -2668,7 +2713,7 @@ mod tests {
         next.groups.clear();
         app.received(Ok(next));
         let (text, _) = screen(&mut app, 100, 24);
-        assert!(text.contains("旧实例不会映射到替代进程"));
+        assert!(text.contains("old instance will not map to a replacement"));
     }
 
     #[test]
@@ -2680,7 +2725,7 @@ mod tests {
         app.handle(key(KeyCode::Char('2')));
         app.handle(key(KeyCode::Enter));
         let (text, _) = screen(&mut app, 90, 24);
-        assert!(text.contains("当前预演没有待确认对象"));
+        assert!(text.contains("No objects need review"));
         assert!(app.should_refresh(Duration::from_secs(2)));
         app.loading = true;
         assert!(!app.should_refresh(Duration::from_secs(2)));
@@ -2691,12 +2736,12 @@ mod tests {
         let mut app = App::new(false);
         app.received(Err("permission denied".into()));
         let (text, _) = screen(&mut app, 100, 24);
-        assert!(text.contains("读取失败"));
-        assert!(!text.contains("已用 0"));
+        assert!(text.contains("Read failed"));
+        assert!(!text.contains("Used 0"));
         app.received(Ok(snapshot()));
         app.received(Err("unavailable".into()));
         let (text, _) = screen(&mut app, 100, 24);
-        assert!(text.contains("旧数据"));
+        assert!(text.contains("Previous data"));
     }
 
     #[test]
@@ -2715,7 +2760,7 @@ mod tests {
         assert!(app.detail_scroll > 0, "narrow viewport needs scrolling");
         let bottom = buffer_text(terminal.backend().buffer());
         assert!(
-            bottom.contains("尚未验证"),
+            bottom.contains("unverified"),
             "bottom retains actual detail rows"
         );
         let last_scroll = app.detail_scroll;
@@ -2766,7 +2811,10 @@ mod tests {
             app.detail_scroll, 0,
             "missing object notice must stay visible"
         );
-        assert!(buffer_text(terminal.backend().buffer()).contains("此对象已不在最近采样中"));
+        assert!(
+            buffer_text(terminal.backend().buffer())
+                .contains("This object is absent from the latest sample")
+        );
     }
 
     #[test]
@@ -2802,7 +2850,7 @@ mod tests {
         app.page = Page::Detail(app.snapshot.as_ref().unwrap().groups[0].id.clone());
         app.handle(key(KeyCode::Char('a')));
         let (text, terminal) = screen(&mut app, 100, 32);
-        assert!(text.contains("确认保存"));
+        assert!(text.contains("Save rule"));
         assert!(
             terminal
                 .backend()
@@ -2817,24 +2865,135 @@ mod tests {
                 .buffer()
                 .content
                 .iter()
-                .any(|cell| cell.symbol() == "安" && cell.fg == Color::Reset)
+                .any(|cell| cell.symbol() == "I" && cell.fg == Color::Reset)
         );
     }
 
     #[test]
     fn brand_adapts_to_desktop_and_compact_windows_without_hiding_navigation() {
         let mut app = App::new(false);
-        let (large, _) = screen(&mut app, 100, 32);
-        assert!(large.contains("█▄▄▄"));
-        assert!(large.contains("`-(_  __)-'"));
-        assert!(large.contains("bree · 规则与预演"));
-        assert!(large.contains("4. 处理记录"));
-        assert!(large.contains("S 设置"));
-        let (compact, _) = screen(&mut app, 60, 20);
-        assert!(compact.contains("( -.- ) bree"));
-        assert!(!compact.contains("█▄▄▄"));
-        assert!(compact.contains("4. 处理记录"));
-        assert!(compact.contains("Q 退出"));
+        app.received(Ok(snapshot()));
+        for (width, height) in [(100, 28), (140, 40), (48, 16)] {
+            let (text, terminal) = screen(&mut app, width, height);
+            assert_eq!(
+                text.contains("█▄▄▄"),
+                width >= 80,
+                "{width}x{height}: {text}"
+            );
+            for label in [
+                "1. Clean",
+                "2. Needs review",
+                "> 3. Memory",
+                "4. History",
+                "S Settings",
+                "Q Quit",
+            ] {
+                assert!(
+                    text.contains(label),
+                    "{width}x{height} lacks {label}: {text}"
+                );
+            }
+            assert!(!text.contains("-.-"));
+            assert!(!text.contains("Rules and preview"));
+            assert!(!text.contains("Understand memory"));
+            let buffer = terminal.backend().buffer();
+            assert!(
+                buffer
+                    .content
+                    .iter()
+                    .all(|cell| cell.bg == Color::Reset
+                        && !cell.modifier.contains(Modifier::REVERSED))
+            );
+            assert!(buffer.content.iter().any(|cell| cell.symbol() == ">"
+                && cell.fg == ACCENT
+                && cell.modifier.contains(Modifier::BOLD)));
+        }
+    }
+
+    #[test]
+    fn compact_home_keeps_navigation_visible_with_missing_metrics_and_refresh_failure() {
+        let mut app = App::new(false);
+        let mut sample = snapshot();
+        sample.system.used_bytes =
+            Metric::unavailable(Validity::Denied, "fixture", "permission denied");
+        sample.system.total_bytes =
+            Metric::unavailable(Validity::Denied, "fixture", "permission denied");
+        sample.system.compressed_bytes =
+            Metric::unavailable(Validity::Unsupported, "fixture", "unsupported");
+        sample.system.swap_used_bytes =
+            Metric::unavailable(Validity::Unknown, "fixture", "unknown");
+        sample.system.pressure = Metric::unavailable(Validity::Unknown, "fixture", "unknown");
+        app.received(Ok(sample));
+        app.received(Err(
+            "refresh failed with a long permission error and private path".into(),
+        ));
+        app.policy_error = Some("rules cannot be read".into());
+        let (text, _) = screen(&mut app, 48, 16);
+        for label in [
+            "Denied",
+            "Unknown",
+            "Previous data",
+            "Rules unreadable",
+            "1. Clean",
+            "2. Needs review",
+            "> 3. Memory",
+            "4. History",
+            "R Refresh",
+            "S Settings",
+            "Q Quit",
+        ] {
+            assert!(text.contains(label), "missing {label}: {text}");
+        }
+        assert!(!text.contains("Used 0"));
+        app.page = Page::Resources;
+        let (text, _) = screen(&mut app, 48, 16);
+        for label in [
+            "Previous data",
+            "R Refresh",
+            "S Settings",
+            "Esc Home",
+            "Q Quit",
+        ] {
+            assert!(text.contains(label), "missing {label}: {text}");
+        }
+    }
+
+    #[test]
+    fn compact_secondary_pages_keep_their_navigation_and_inherited_colors() {
+        let store = TestStore::new();
+        let mut app = store.app();
+        app.received(Ok(scoped_snapshot("Fixture")));
+        let detail = app.snapshot.as_ref().unwrap().groups[0].id.clone();
+        for page in [
+            Page::Settings,
+            Page::Resources,
+            Page::Detail(detail),
+            Page::RuleDetail("missing".into()),
+            Page::Preview,
+            Page::Results,
+            Page::History,
+            Page::HistoryDetail("missing".into()),
+        ] {
+            app.page = page.clone();
+            let (text, terminal) = screen(&mut app, 48, 16);
+            for label in ["Esc", "Q Quit"] {
+                assert!(text.contains(label), "{page:?} lacks {label}: {text}");
+            }
+            assert!(
+                terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .all(|cell| cell.bg == Color::Reset
+                        && !cell.modifier.contains(Modifier::REVERSED))
+            );
+        }
+        app.page = Page::Detail(app.snapshot.as_ref().unwrap().groups[0].id.clone());
+        app.handle(key(KeyCode::Char('a')));
+        let (text, _) = screen(&mut app, 48, 16);
+        assert!(text.contains("Enter Save rule"));
+        assert!(text.contains("Esc Cancel"));
     }
 
     #[test]
@@ -2849,7 +3008,7 @@ mod tests {
         let (text, _) = screen(&mut app, 110, 32);
         assert!(text.contains("com.example.fixture"));
         assert!(text.contains("/Applications/Fixture.app/Contents/MacOS/Fixture"));
-        assert!(text.contains("当前不会发送退出请求"));
+        assert!(text.contains("No quit requests are sent"));
         app.handle(key(KeyCode::Esc));
         assert!(store.0.load().unwrap().rules.is_empty());
         assert!(
@@ -2956,7 +3115,7 @@ mod tests {
         app.handle(key(KeyCode::Enter));
         app.handle(key(KeyCode::Char('s')));
         let (text, _) = screen(&mut app, 100, 30);
-        assert!(text.contains("当前只读"));
+        assert!(text.contains("read-only"));
         app.handle(key(KeyCode::Char('d')));
         assert!(app.confirmation.is_none());
         assert_eq!(std::fs::read(&path).unwrap(), b"broken configuration");
@@ -2974,9 +3133,14 @@ mod tests {
         assert_eq!(plan.pending_count, 1);
         assert_eq!(plan.rule_revision, 0);
         let (text, _) = screen(&mut app, 100, 30);
-        assert!(text.contains("自动候选 0"));
-        assert!(text.contains("采样 UTC"));
-        assert!(text.contains("尚无用户允许规则"));
+        assert!(text.contains("Automatic 0"));
+        assert!(text.contains("Sample UTC"));
+        assert!(
+            text.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .contains("no user allow rule")
+        );
         assert!(!app.should_refresh(Duration::ZERO));
         assert!(
             std::fs::read_to_string(store.0.root().join("journal.jsonl"))
@@ -2993,7 +3157,7 @@ mod tests {
             .unwrap();
         app.reload_policy();
         let (text, _) = screen(&mut app, 100, 30);
-        assert!(text.contains("当前预演为旧修订"));
+        assert!(text.contains("preview uses an old revision"));
         assert_eq!(app.preview_plan.as_ref().unwrap().rule_revision, 0);
     }
 
@@ -3010,8 +3174,8 @@ mod tests {
         assert_eq!(app.groups()[0].category, Category::Unknown);
         app.handle(key(KeyCode::Enter));
         let (text, _) = screen(&mut app, 110, 45);
-        assert!(text.contains("开发标签 Codex CLI"));
-        assert!(text.contains("不代表任务完成"));
+        assert!(text.contains("Developer label Codex CLI"));
+        assert!(text.contains("not task completion"));
     }
 
     #[test]
@@ -3041,7 +3205,7 @@ mod tests {
             std::fs::read(store.0.root().join("state.json")).unwrap(),
             original
         );
-        assert!(app.notice.as_deref().unwrap().contains("保存失败"));
+        assert!(app.notice.as_deref().unwrap().contains("save failed"));
     }
 
     #[test]
@@ -3055,8 +3219,8 @@ mod tests {
         assert_eq!(app.preview_plan.as_ref().unwrap().automatic_count, 0);
         app.handle(key(KeyCode::Enter));
         let (text, _) = screen(&mut app, 110, 32);
-        assert!(text.contains("预演未完成"));
-        assert!(text.contains("未记录成功预演"));
+        assert!(text.contains("Preview incomplete"));
+        assert!(text.contains("no successful preview recorded"));
         assert!(!store.0.root().join("journal.jsonl").exists());
     }
 
@@ -3187,10 +3351,15 @@ mod tests {
         app.received(Err("sample unavailable".into()));
         assert!(app.preview_plan.is_none());
         assert!(app.preview_sample.is_none());
-        assert!(app.preview_error.as_deref().unwrap().contains("采样失败"));
+        assert!(
+            app.preview_error
+                .as_deref()
+                .unwrap()
+                .contains("Sampling failed")
+        );
         assert_eq!(prepared_record_count(&store.0), 1);
         let (text, _) = screen(&mut app, 110, 32);
-        assert!(text.contains("没有新计划，也未记录成功预演"));
+        assert!(text.contains("No new plan or successful preview recorded"));
         assert!(text.contains("sample unavailable"));
     }
 
@@ -3212,7 +3381,7 @@ mod tests {
             name: format!("测试应用 {index}"),
             identity: Some(sample.processes[0].identity.clone()),
             outcome,
-            reason: format!("测试依据 {index}"),
+            reason: format!("Test reason {index}"),
             request_sent: index < 3,
             observed_ms: if outcome == Outcome::StillRunning {
                 15_000
@@ -3232,7 +3401,8 @@ mod tests {
             targets,
             resource_before: sample.system.clone(),
             resource_after: Some(sample.system),
-            resource_observation: "测试观察：内存没有下降，压力没有改善。".into(),
+            resource_observation:
+                "Test observation: memory did not decrease and pressure did not improve.".into(),
             errors: Vec::new(),
         }
     }
@@ -3249,7 +3419,7 @@ mod tests {
         app.handle(key(KeyCode::Enter));
         assert!(app.cleanup.is_none());
         assert_eq!(app.page, Page::Home);
-        assert!(app.notice.as_deref().unwrap().contains("没有发送"));
+        assert!(app.notice.as_deref().unwrap().contains("no requests sent"));
         app.handle(key(KeyCode::Enter));
         app.page = Page::Detail(id);
         app.handle(key(KeyCode::Char('e')));
@@ -3288,11 +3458,11 @@ mod tests {
             _ => panic!("single-instance consent must keep its frozen snapshot"),
         }
         let (text, terminal) = screen(&mut app, 110, 36);
-        assert!(text.contains("单次正常退出确认"));
+        assert!(text.contains("Confirm normal quit"));
         assert!(text.contains("PID 123"));
-        assert!(text.contains("10 秒 + 5 微秒"));
-        assert!(text.contains("不新增允许规则"));
-        assert!(text.contains("替代实例会跳过"));
+        assert!(text.contains("10 s + 5 µs"));
+        assert!(text.contains("adds no Allow rule"));
+        assert!(text.contains("replacement instance will be skipped"));
         assert!(
             terminal
                 .backend()
@@ -3315,8 +3485,8 @@ mod tests {
         app.page = Page::Results;
         app.cleanup_result = Some(cleanup_result());
         let (text, terminal) = screen(&mut app, 150, 65);
-        assert!(text.contains("应用退出结果"));
-        assert!(text.contains("系统资源观察"));
+        assert!(text.contains("Application quit outcomes"));
+        assert!(text.contains("System resource observations"));
         for outcome in [
             Outcome::Exited,
             Outcome::StillRunning,
@@ -3327,8 +3497,8 @@ mod tests {
         ] {
             assert!(text.contains(outcome.text()));
         }
-        assert!(text.contains("内存没有下降，压力没有改善"));
-        assert!(text.contains("没有改善也是合法结果"));
+        assert!(text.contains("memory did not decrease and pressure did not improve"));
+        assert!(text.contains("No improvement is a valid result"));
         assert!(
             terminal
                 .backend()
@@ -3339,7 +3509,7 @@ mod tests {
         );
         app.cleanup_result.as_mut().unwrap().resource_after = None;
         let (text, _) = screen(&mut app, 150, 65);
-        assert!(text.contains("未取得资源采样，不能判断改善情况"));
+        assert!(text.contains("no resource sample; improvement cannot be assessed"));
         app.handle(key(KeyCode::Esc));
         assert_eq!(app.page, Page::Home);
         assert!(app.cleanup.is_none());
@@ -3372,8 +3542,8 @@ mod tests {
         app.handle(key(KeyCode::Char('r')));
         assert_eq!(app.history.len(), 2);
         let (text, _) = screen(&mut app, 120, 30);
-        assert!(text.contains("已完成"));
-        assert!(text.contains("未完成 / 无最终结果"));
+        assert!(text.contains("Finished"));
+        assert!(text.contains("Unfinished / no final result"));
         let unfinished = app
             .history
             .iter()
@@ -3382,8 +3552,8 @@ mod tests {
         app.history_selection.select(Some(unfinished));
         app.handle(key(KeyCode::Enter));
         let (text, _) = screen(&mut app, 120, 32);
-        assert!(text.contains("没有最终结果"));
-        assert!(text.contains("Bree 不会重放"));
+        assert!(text.contains("has no final result"));
+        assert!(text.contains("Bree will not replay"));
         app.handle(key(KeyCode::Esc));
         let finished = app
             .history
@@ -3393,8 +3563,8 @@ mod tests {
         app.history_selection.select(Some(finished));
         app.handle(key(KeyCode::Enter));
         let (text, _) = screen(&mut app, 150, 65);
-        assert!(text.contains("应用退出结果"));
-        assert!(text.contains("系统资源观察"));
+        assert!(text.contains("Application quit outcomes"));
+        assert!(text.contains("System resource observations"));
         assert!(app.cleanup.is_none());
         assert_eq!(
             std::fs::read(store.0.root().join("journal.jsonl")).unwrap(),
@@ -3419,7 +3589,12 @@ mod tests {
         app.received(Err("test sampling failure".into()));
         assert!(!app.start_cleanup_after_sample);
         assert!(app.cleanup.is_none());
-        assert!(app.notice.as_deref().unwrap().contains("清理未开始"));
+        assert!(
+            app.notice
+                .as_deref()
+                .unwrap()
+                .contains("Cleanup not started")
+        );
         assert!(!store.0.root().exists());
     }
 
@@ -3429,9 +3604,9 @@ mod tests {
         app.cleanup = Some(Session::test_running());
         app.page = Page::Executing;
         let (text, terminal) = screen(&mut app, 120, 36);
-        assert!(text.contains("请求已发送"));
-        assert!(text.contains("尚未核验"));
-        assert!(text.contains("拒绝或仍在运行不会触发强制结束"));
+        assert!(text.contains("Request sent"));
+        assert!(text.contains("Not yet verified"));
+        assert!(text.contains("Refusal or continued running never triggers force quit"));
         assert!(
             terminal
                 .backend()
@@ -3478,8 +3653,8 @@ mod tests {
             assert!(result.targets[0].request_sent);
             assert_eq!(result.targets[0].outcome, crate::cleanup::Outcome::Unknown);
             let (text, _) = screen(&mut app, 120, 40);
-            assert!(text.contains("本次已取消"));
-            assert!(text.contains("尚未核验"));
+            assert!(text.contains("Cancelled"));
+            assert!(text.contains("Not yet verified"));
         }
     }
 
@@ -3501,8 +3676,8 @@ mod tests {
         assert!(app.history_error.is_some());
         assert_eq!(app.history.len(), 1);
         let (text, _) = screen(&mut app, 120, 32);
-        assert!(text.contains("记录读取失败"));
-        assert!(text.contains("缓存记录可能过期"));
+        assert!(text.contains("History read failed"));
+        assert!(text.contains("Cached records may be stale"));
         assert!(app.cleanup.is_none());
         assert_eq!(
             std::fs::read(store.0.root().join("journal.jsonl")).unwrap(),

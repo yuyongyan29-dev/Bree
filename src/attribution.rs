@@ -26,12 +26,12 @@ pub fn label_process(process: &ProcessInfo) -> Option<DevelopmentLabel> {
     let (label, observed) = if executable == CODEX_APP_CLI {
         (
             "Codex CLI",
-            "主应用内确切 Codex CLI 可执行路径；安装布局以本机 0.160.1 样本验证，运行时未读取版本",
+            "Exact Codex CLI executable path inside the main app; installation layout verified locally with a 0.160.1 sample, version not read at runtime",
         )
     } else if verified_claude_native_installation(executable) {
         (
             "Claude Code",
-            "Claude 原生版本安装的确切可执行路径；仅纳入本机已验证的 2.1.292 布局",
+            "Exact executable path of a native Claude installation; only the locally verified 2.1.292 layout is recognized",
         )
     } else {
         return None;
@@ -39,7 +39,7 @@ pub fn label_process(process: &ProcessInfo) -> Option<DevelopmentLabel> {
     Some(DevelopmentLabel {
         label: label.into(),
         evidence: format!(
-            "{observed}，当前微秒级实例身份有效。此标签仅解释开发工具安装来源；未验证签名、任务项目、完成或共享关系，不构成停止依据。"
+            "{observed}; the current instance identity with microsecond precision is valid. This label only explains the developer tool installation source; signature, task project, completion, and sharing have not been verified. It does not justify stopping the process."
         ),
         confidence: "installation_path".into(),
     })
@@ -112,7 +112,7 @@ mod tests {
         .unwrap();
         assert_eq!(claude.label, "Claude Code");
         assert!(!claude.evidence.contains("/Users"));
-        assert!(claude.evidence.contains("不构成停止依据"));
+        assert!(claude.evidence.contains("does not justify stopping"));
     }
 
     #[test]

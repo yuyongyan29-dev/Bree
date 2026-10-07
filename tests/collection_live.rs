@@ -34,7 +34,7 @@ fn live_snapshot_has_real_core_metrics_conservative_capabilities_and_full_member
     assert!(
         own.protection_reasons
             .iter()
-            .any(|reason| reason.contains("Bree 自身"))
+            .any(|reason| reason.contains("Bree itself"))
     );
     let mut grouped = HashSet::new();
     for group in &snapshot.groups {

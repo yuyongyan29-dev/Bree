@@ -30,22 +30,22 @@ pub fn load(store: &Store, limit: usize) -> Result<Vec<HistoryItem>, String> {
             .data
             .get("run_id")
             .and_then(serde_json::Value::as_str)
-            .ok_or("处理记录缺少 run_id；历史不可完整解读")?;
+            .ok_or("Cleanup record is missing run_id; history cannot be fully interpreted")?;
         if positions.contains_key(run_id) {
             continue;
         }
         let item = if record.event == "cleanup_finished" {
             let result: CleanupResult = serde_json::from_value(record.data.clone())
-                .map_err(|e| format!("处理结果记录无效：{e}"))?;
+                .map_err(|e| format!("Invalid cleanup result record: {e}"))?;
             if result.schema_version != 1 {
-                return Err("处理结果 schema_version 不受支持".into());
+                return Err("Unsupported cleanup result schema_version".into());
             }
             let message = if result.cancelled {
-                "用户取消；已发请求不能撤销"
+                "Cancelled by the user; sent requests cannot be recalled"
             } else if !result.errors.is_empty() {
-                "处理结束，必要记录或资源观察有缺口"
+                "Cleanup finished with gaps in required records or resource observations"
             } else {
-                "处理结束；退出状态与系统资源观察分别记录"
+                "Cleanup finished; exit status and system resource observations are recorded separately"
             };
             HistoryItem {
                 run_id: run_id.into(),
@@ -65,7 +65,7 @@ pub fn load(store: &Store, limit: usize) -> Result<Vec<HistoryItem>, String> {
                 timestamp_unix_ms: record.timestamp_unix_ms,
                 status: "unfinished".into(),
                 result: None,
-                message: "没有结束记录，可能仍在进行或被中断；请求／退出结果未知，不重放动作"
+                message: "No finish record; cleanup may still be running or was interrupted. Request and exit outcomes are unknown; actions are not replayed"
                     .into(),
             }
         };

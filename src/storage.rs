@@ -63,13 +63,15 @@ impl Store {
         let root = match std::env::var_os("BREE_DATA_DIR") {
             Some(path) => PathBuf::from(path),
             None => {
-                let home = std::env::var_os("HOME")
-                    .ok_or_else(|| "无法确定用户目录；请设置绝对路径 BREE_DATA_DIR".to_string())?;
+                let home = std::env::var_os("HOME").ok_or_else(|| {
+                    "Cannot determine the user directory; set BREE_DATA_DIR to an absolute path"
+                        .to_string()
+                })?;
                 PathBuf::from(home).join("Library/Application Support/Bree")
             }
         };
         if !root.is_absolute() {
-            return Err("Bree 数据目录必须是绝对路径".to_string());
+            return Err("Bree data directory must be an absolute path".to_string());
         }
         Ok(Self::at(root))
     }
@@ -98,10 +100,10 @@ impl Store {
         let next = current.apply(change, now_ms()?)?;
         next.validate()?;
         let mut encoded =
-            serde_json::to_vec_pretty(&next).map_err(|e| format!("规则编码失败：{e}"))?;
+            serde_json::to_vec_pretty(&next).map_err(|e| format!("Failed to encode rules: {e}"))?;
         encoded.push(b'\n');
         if encoded.len() > MAX_STATE_BYTES {
-            return Err("规则文件超过 1 MiB 上限".to_string());
+            return Err("Rule file exceeds the 1 MiB limit".to_string());
         }
         // A durable attempt is required before changing state. It is deliberately not a
         // success event: an atomic state write can still fail afterwards.
@@ -241,10 +243,10 @@ impl Store {
 
     fn open_root(&self, create: bool) -> Result<Option<RootDir>, String> {
         if !self.root.is_absolute() {
-            return Err("Bree 数据目录必须是绝对路径".to_string());
+            return Err("Bree data directory must be an absolute path".to_string());
         }
         match fs::symlink_metadata(&self.root) {
-            Ok(meta) => check_private(&meta, true, "Bree 数据目录")?,
+            Ok(meta) => check_private(&meta, true, "Bree data directory")?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 if !create {
                     return Ok(None);
@@ -253,12 +255,12 @@ impl Store {
                     .recursive(true)
                     .mode(0o700)
                     .create(&self.root)
-                    .map_err(|e| format!("无法创建 Bree 数据目录：{e}"))?;
+                    .map_err(|e| format!("Cannot create the Bree data directory: {e}"))?;
             }
-            Err(e) => return Err(format!("无法读取 Bree 数据目录：{e}")),
+            Err(e) => return Err(format!("Cannot read the Bree data directory: {e}")),
         }
         let path = CString::new(self.root.as_os_str().as_encoded_bytes())
-            .map_err(|_| "数据目录包含无效字符".to_string())?;
+            .map_err(|_| "Data directory contains invalid characters".to_string())?;
         // SAFETY: path is NUL-terminated, flags reject a symlink at the managed root;
         // the returned descriptor is exclusively transferred into File on success.
         let fd = unsafe {
@@ -269,7 +271,7 @@ impl Store {
         };
         if fd < 0 {
             return Err(format!(
-                "无法打开 Bree 数据目录：{}",
+                "Cannot open the Bree data directory: {}",
                 std::io::Error::last_os_error()
             ));
         }
@@ -278,16 +280,16 @@ impl Store {
         check_private(
             &file
                 .metadata()
-                .map_err(|e| format!("无法检查数据目录：{e}"))?,
+                .map_err(|e| format!("Cannot inspect the data directory: {e}"))?,
             true,
-            "Bree 数据目录",
+            "Bree data directory",
         )?;
         Ok(Some(RootDir { file }))
     }
 
     fn required_root(&self) -> Result<RootDir, String> {
         self.open_root(true)?
-            .ok_or_else(|| "无法打开 Bree 数据目录".to_string())
+            .ok_or_else(|| "Cannot open the Bree data directory".to_string())
     }
 
     fn append_record_at(
@@ -298,7 +300,7 @@ impl Store {
         now: u64,
     ) -> Result<(), String> {
         if event.is_empty() || event.len() > 128 || event.chars().any(char::is_control) {
-            return Err("日志事件必须是 1–128 字节的可显示名称".to_string());
+            return Err("Journal event must be a printable name of 1–128 bytes".to_string());
         }
         let record = Record {
             schema_version: 1,
@@ -306,10 +308,11 @@ impl Store {
             event: event.to_string(),
             data,
         };
-        let mut encoded = serde_json::to_vec(&record).map_err(|e| format!("日志编码失败：{e}"))?;
+        let mut encoded = serde_json::to_vec(&record)
+            .map_err(|e| format!("Failed to encode the journal record: {e}"))?;
         encoded.push(b'\n');
         if encoded.len() > MAX_JOURNAL_BYTES {
-            return Err("单条日志超过 10 MiB 上限".to_string());
+            return Err("One journal record exceeds the 10 MiB limit".to_string());
         }
         let _lock = FileLock::acquire(dir, "journal.lock", false)?;
         let previous = dir
@@ -329,19 +332,19 @@ fn check_private(meta: &fs::Metadata, directory: bool, label: &str) -> Result<()
         }
     {
         return Err(format!(
-            "{label} 必须是普通{}，不能是符号链接",
-            if directory { "目录" } else { "文件" }
+            "{label} must be a regular {}, not a symbolic link",
+            if directory { "directory" } else { "file" }
         ));
     }
     // SAFETY: geteuid takes no arguments and returns the current effective user ID.
     let own_uid = unsafe { libc::geteuid() };
     if meta.uid() != own_uid || meta.mode() & 0o077 != 0 {
         return Err(format!(
-            "{label} 的所有者或权限不安全；目录需 0700，文件需 0600"
+            "{label} has unsafe ownership or permissions; directories require 0700 and files require 0600"
         ));
     }
     if !directory && meta.nlink() > 1 {
-        return Err(format!("{label} 不能是硬链接"));
+        return Err(format!("{label} must not be a hard link"));
     }
     Ok(())
 }
@@ -352,7 +355,7 @@ struct RootDir {
 
 impl RootDir {
     fn open_file(&self, name: &str, flags: i32) -> Result<Option<File>, String> {
-        let name_c = CString::new(name).map_err(|_| "文件名无效".to_string())?;
+        let name_c = CString::new(name).map_err(|_| "Invalid file name".to_string())?;
         let mut creation_retries = 0;
         let fd = loop {
             // SAFETY: the root descriptor is a checked private directory. name is a
@@ -381,14 +384,14 @@ impl RootDir {
                 creation_retries += 1;
                 continue;
             }
-            return Err(format!("无法打开 {name}：{e}"));
+            return Err(format!("Cannot open {name}: {e}"));
         };
         // SAFETY: openat returned a new owned descriptor.
         let file = unsafe { File::from_raw_fd(fd) };
         check_private(
             &file
                 .metadata()
-                .map_err(|e| format!("无法检查 {name}：{e}"))?,
+                .map_err(|e| format!("Cannot inspect {name}: {e}"))?,
             false,
             name,
         )?;
@@ -402,9 +405,9 @@ impl RootDir {
         let mut data = Vec::new();
         file.take((maximum + 1) as u64)
             .read_to_end(&mut data)
-            .map_err(|e| format!("无法读取 {name}：{e}"))?;
+            .map_err(|e| format!("Cannot read {name}: {e}"))?;
         if data.len() > maximum {
-            return Err(format!("{name} 超过 {} 字节上限", maximum));
+            return Err(format!("{name} exceeds the {}-byte limit", maximum));
         }
         Ok(Some(data))
     }
@@ -419,18 +422,20 @@ impl RootDir {
         );
         let mut file = self
             .open_file(&name, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL)?
-            .ok_or_else(|| "无法创建临时文件".to_string())?;
+            .ok_or_else(|| "Cannot create a temporary file".to_string())?;
         let mut temp = TempFile {
             dir: self,
             name,
             committed: false,
         };
         file.write_all(bytes)
-            .map_err(|e| format!("无法写入 {target}：{e}"))?;
+            .map_err(|e| format!("Cannot write {target}: {e}"))?;
         file.sync_all()
-            .map_err(|e| format!("无法同步 {target}：{e}"))?;
-        let source = CString::new(temp.name.as_str()).map_err(|_| "临时文件名无效".to_string())?;
-        let destination = CString::new(target).map_err(|_| "目标文件名无效".to_string())?;
+            .map_err(|e| format!("Cannot sync {target}: {e}"))?;
+        let source = CString::new(temp.name.as_str())
+            .map_err(|_| "Invalid temporary file name".to_string())?;
+        let destination =
+            CString::new(target).map_err(|_| "Invalid target file name".to_string())?;
         // SAFETY: both single-component names are valid C strings relative to the
         // same checked root descriptor. renameat atomically replaces only target.
         if unsafe {
@@ -443,14 +448,16 @@ impl RootDir {
         } != 0
         {
             return Err(format!(
-                "无法替换 {target}：{}",
+                "Cannot replace {target}: {}",
                 std::io::Error::last_os_error()
             ));
         }
         temp.committed = true;
-        self.file
-            .sync_all()
-            .map_err(|e| format!("{target} 已替换，但目录同步失败；请重新读取确认：{e}"))
+        self.file.sync_all().map_err(|e| {
+            format!(
+                "{target} was replaced, but directory sync failed; read it again to confirm: {e}"
+            )
+        })
     }
 }
 
@@ -480,7 +487,7 @@ impl FileLock {
     fn acquire(dir: &RootDir, name: &str, nonblocking: bool) -> Result<Self, String> {
         let file = dir
             .open_file(name, libc::O_RDWR | libc::O_CREAT)?
-            .ok_or_else(|| format!("无法创建 {name}"))?;
+            .ok_or_else(|| format!("Cannot create {name}"))?;
         let operation = libc::LOCK_EX | libc::LOCK_NB;
         let started = Instant::now();
         let timeout = Duration::from_millis(LOCK_WAIT_MS);
@@ -491,7 +498,10 @@ impl FileLock {
             }
             let e = std::io::Error::last_os_error();
             if nonblocking && e.kind() == std::io::ErrorKind::WouldBlock {
-                return Err("已有 Bree 清理或预演正在进行；请等待其完成".to_string());
+                return Err(
+                    "Another Bree cleanup or dry run is in progress; wait for it to finish"
+                        .to_string(),
+                );
             }
             if !nonblocking
                 && matches!(
@@ -502,7 +512,7 @@ impl FileLock {
                 let elapsed = started.elapsed();
                 if elapsed >= timeout {
                     return Err(format!(
-                        "{name} 忙碌，等待 {LOCK_WAIT_MS} ms 后已停止；请稍后重试"
+                        "{name} is busy; stopped after waiting {LOCK_WAIT_MS} ms. Try again later"
                     ));
                 }
                 // A short bounded wait replaces blocking flock, so external lock
@@ -510,7 +520,7 @@ impl FileLock {
                 std::thread::sleep((timeout - elapsed).min(Duration::from_millis(10)));
                 continue;
             }
-            return Err(format!("无法锁定 {name}：{e}"));
+            return Err(format!("Cannot lock {name}: {e}"));
         }
     }
 }
@@ -530,15 +540,17 @@ fn load_state(dir: &RootDir) -> Result<PolicyState, String> {
 }
 
 fn decode_state(bytes: &[u8]) -> Result<PolicyState, String> {
-    let state: PolicyState =
-        serde_json::from_slice(bytes).map_err(|e| format!("规则文件损坏；原文件已保留：{e}"))?;
+    let state: PolicyState = serde_json::from_slice(bytes)
+        .map_err(|e| format!("Rule file is corrupt; the original file is preserved: {e}"))?;
     state.validate()?;
     Ok(state)
 }
 
 fn journal_lines(bytes: &[u8]) -> Result<Vec<(&[u8], u64)>, String> {
     if !bytes.is_empty() && !bytes.ends_with(b"\n") {
-        return Err("日志尾行不完整；原文件已保留".to_string());
+        return Err(
+            "The last journal line is incomplete; the original file is preserved".to_string(),
+        );
     }
     let mut records = Vec::new();
     for (index, line) in bytes.split_inclusive(|byte| *byte == b'\n').enumerate() {
@@ -549,21 +561,24 @@ fn journal_lines(bytes: &[u8]) -> Result<Vec<(&[u8], u64)>, String> {
 }
 
 fn decode_record(line: &[u8], line_number: usize) -> Result<Record, String> {
-    let record: Record = serde_json::from_slice(line)
-        .map_err(|e| format!("日志第 {line_number} 行损坏；原文件已保留：{e}"))?;
+    let record: Record = serde_json::from_slice(line).map_err(|e| {
+        format!("Journal line {line_number} is corrupt; the original file is preserved: {e}")
+    })?;
     if record.schema_version != 1
         || record.event.is_empty()
         || record.event.len() > 128
         || record.event.chars().any(char::is_control)
     {
-        return Err(format!("日志第 {line_number} 行格式不受支持；原文件已保留"));
+        return Err(format!(
+            "Journal line {line_number} has an unsupported format; the original file is preserved"
+        ));
     }
     Ok(record)
 }
 
 fn rotate_journal(previous: &[u8], newest: &[u8], now: u64) -> Result<Vec<u8>, String> {
     if newest.len() > MAX_JOURNAL_BYTES {
-        return Err("单条日志超过 10 MiB 上限".to_string());
+        return Err("One journal record exceeds the 10 MiB limit".to_string());
     }
     let cutoff = now.saturating_sub(JOURNAL_RETENTION_MS);
     let records = journal_lines(previous)?;
@@ -588,9 +603,11 @@ fn rotate_journal(previous: &[u8], newest: &[u8], now: u64) -> Result<Vec<u8>, S
 fn now_ms() -> Result<u64, String> {
     let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|_| "系统时间早于 Unix 起点，无法记录规则变更".to_string())?
+        .map_err(|_| {
+            "System time is before the Unix epoch; cannot record rule changes".to_string()
+        })?
         .as_millis();
-    u64::try_from(ms).map_err(|_| "系统时间超出存储范围".to_string())
+    u64::try_from(ms).map_err(|_| "System time exceeds the storage range".to_string())
 }
 
 #[cfg(test)]
@@ -945,16 +962,16 @@ mod tests {
         fs::remove_file(store.root().join(STATE)).unwrap();
         private_write(&store.root().join(STATE), b"{}");
         fs::set_permissions(store.root().join(STATE), fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(store.load().unwrap_err().contains("权限"));
+        assert!(store.load().unwrap_err().contains("permissions"));
         fs::remove_file(store.root().join(STATE)).unwrap();
         fs::hard_link(root.0.join("outside"), store.root().join(STATE)).unwrap();
-        assert!(store.load().unwrap_err().contains("硬链接"));
+        assert!(store.load().unwrap_err().contains("hard link"));
         fs::remove_file(store.root().join(STATE)).unwrap();
         fs::create_dir(store.root().join(STATE)).unwrap();
         assert!(store.load().is_err());
         fs::remove_dir(store.root().join(STATE)).unwrap();
         fs::set_permissions(store.root(), fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(store.load().unwrap_err().contains("权限"));
+        assert!(store.load().unwrap_err().contains("permissions"));
         fs::set_permissions(store.root(), fs::Permissions::from_mode(0o700)).unwrap();
         let linked = Store::at(root.0.join("linked"));
         symlink(store.root(), linked.root()).unwrap();
@@ -1191,7 +1208,7 @@ mod tests {
         let store = root.store();
         let mut holder = child("storage::tests::subprocess_fixture", &root.0, "hold");
         wait_held(&mut holder, &root.0);
-        assert!(store.execution_lock().unwrap_err().contains("已有 Bree"));
+        assert!(store.execution_lock().unwrap_err().contains("Another Bree"));
         private_write(&root.0.join("release"), b"release");
         wait_child(&mut holder).unwrap();
         let guard = store.execution_lock().unwrap();
@@ -1292,7 +1309,7 @@ mod tests {
                             Ok(_) => break,
                             Err(error)
                                 if ["state.lock", "journal.lock"].iter().any(|name| {
-                                    error == format!("{name} 忙碌，等待 {LOCK_WAIT_MS} ms 后已停止；请稍后重试")
+                                    error == format!("{name} is busy; stopped after waiting {LOCK_WAIT_MS} ms. Try again later")
                                 }) =>
                             {
                                 // This fixture is the caller. A precise lock-busy error

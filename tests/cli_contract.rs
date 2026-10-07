@@ -13,8 +13,30 @@ fn naked_command_without_tty_never_waits_for_input() {
     let output = bree(&[]);
     assert!(output.status.success());
     let text = String::from_utf8(output.stdout).unwrap();
-    assert!(text.contains("用法"));
+    assert!(text.contains("Usage:"));
     assert!(!text.contains('\u{1b}'));
+}
+
+#[test]
+fn all_command_help_is_in_english() {
+    for subcommand in [
+        "", "status", "list", "inspect", "watch", "doctor", "clean", "history", "license",
+    ] {
+        let args = if subcommand.is_empty() {
+            vec!["--help"]
+        } else {
+            vec![subcommand, "--help"]
+        };
+        let output = bree(&args);
+        assert!(output.status.success(), "help for {subcommand}");
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(text.contains("Usage:"), "help for {subcommand}");
+        assert!(
+            !text.chars().any(|c| ('\u{3400}'..='\u{9fff}').contains(&c)),
+            "untranslated help for {subcommand}: {text}"
+        );
+        assert!(output.stderr.is_empty());
+    }
 }
 
 #[test]
@@ -290,10 +312,14 @@ mod rules {
         let guard = lane.execution_lock().unwrap();
         let output = store.run(&["clean", "--dry-run", "--json"]);
         assert_eq!(output.status.code(), Some(1));
-        assert!(String::from_utf8_lossy(&output.stderr).contains("已有 Bree 清理或预演正在进行"));
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("cleanup or dry run is in progress")
+        );
         let batch = store.run(&["clean", "--yes", "--json"]);
         assert_eq!(batch.status.code(), Some(1));
-        assert!(String::from_utf8_lossy(&batch.stderr).contains("已有 Bree 清理或预演正在进行"));
+        assert!(
+            String::from_utf8_lossy(&batch.stderr).contains("cleanup or dry run is in progress")
+        );
         drop(guard);
         // A directory at the journal path is an actual I/O obstacle even for an admin account.
         fs::create_dir(store.0.join("journal.jsonl")).unwrap();
@@ -325,7 +351,7 @@ mod rules {
             result["resource_observation"]
                 .as_str()
                 .unwrap()
-                .contains("没有发送退出请求")
+                .contains("No termination requests were sent")
         );
         let before = fs::read(store.0.join("journal.jsonl")).unwrap();
         let history = store.run(&["history", "--json"]);
@@ -476,7 +502,7 @@ mod rules {
         );
         assert!(error.get("run_id").is_none());
         assert!(error.get("targets").is_none());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("命令取消"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Command cancelled"));
         assert_eq!(fs::read(store.0.join("journal.jsonl")).unwrap(), before);
         assert_eq!(
             unsafe { libc::flock(journal_lock.as_raw_fd(), libc::LOCK_UN) },
@@ -604,7 +630,13 @@ fn stale_inspect_fails_as_structured_error() {
     assert_eq!(output.status.code(), Some(1));
     let error: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(error["schema_version"], 1);
-    assert!(error["error"]["message"].as_str().unwrap().contains("身份"));
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .to_ascii_lowercase()
+            .contains("identity")
+    );
 }
 
 #[cfg(target_os = "macos")]
