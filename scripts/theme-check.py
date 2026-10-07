@@ -28,6 +28,10 @@ MUTABLE_FLAGS = os.O_APPEND | os.O_ASYNC | os.O_SYNC | os.O_DSYNC | os.O_NONBLOC
 PIXEL_RGB = {(40, 40, 40), (77, 77, 77), (134, 134, 132),
              (185, 183, 176), (222, 220, 213), (249, 246, 239)}
 PIXEL_INDEXED = {236, 239, 244, 250, 253, 231}
+HEADER_MIN_COLUMNS = 60
+HEADER_MIN_ROWS = 22
+MASCOT_WIDTH = 12
+MASCOT_HEIGHT = 6
 
 
 def pixel_color(color):
@@ -77,8 +81,10 @@ class Screen:
                 width = 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
                 if self.x < self.columns:
                     if self.background is not None:
-                        if not (self.pixel_enabled and self.columns >= 90 and self.rows >= 24
-                                and 2 <= self.x < 34 and 1 <= self.y < 17
+                        if not (self.pixel_enabled and self.columns >= HEADER_MIN_COLUMNS
+                                and self.rows >= HEADER_MIN_ROWS
+                                and 2 <= self.x < 2 + MASCOT_WIDTH
+                                and 1 <= self.y < 1 + MASCOT_HEIGHT
                                 and char == "▀" and pixel_color(self.foreground)
                                 and pixel_color(self.background)):
                             raise RuntimeError(f"background leaked outside opaque mascot cell: "
@@ -278,12 +284,21 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
                                 raise RuntimeError(f"home entry clipped: {label}\n{screen.text()}")
                         if "-.-" in screen.text() or "Rules and preview" in screen.text():
                             raise RuntimeError("removed mascot or subtitle remains")
+                        for label in ("Memory pressure:", "> 3. Memory", "P Preview"):
+                            line = next(line for line in home if label in line)
+                            if line.index(label) != 2:
+                                raise RuntimeError(f"home content was shifted by the mascot: {line}")
+                        menu_row = next(i for i, line in enumerate(home) if "4. History" in line)
+                        footer_row = next(i for i, line in enumerate(home) if "↑↓ /" in line)
+                        if footer_row - menu_row > 2:
+                            raise RuntimeError("home shortcuts are too far below the menu")
                     else:
                         # Both narrow and wide pages must keep the exit key visible.
                         exit_key = "Ctrl+C Quit" if "Enter Apply" in screen.text() else "Q Quit"
                         if exit_key not in screen.text():
                             raise RuntimeError(f"page exit key clipped: stage {current}\n{screen.text()}")
-                    expected_mascot = pixel_enabled and screen.columns >= 90 and screen.rows >= 24
+                    expected_mascot = (pixel_enabled and screen.columns >= HEADER_MIN_COLUMNS
+                                       and screen.rows >= HEADER_MIN_ROWS)
                     if resize_home:
                         actual_mascot = screen.colored_background_count() > 0
                         if actual_mascot != expected_mascot:
@@ -315,10 +330,10 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
             if (fcntl.fcntl(slave, fcntl.F_GETFL) & MUTABLE_FLAGS) != flags_before:
                 raise RuntimeError("mutable terminal file flags changed")
             check_colors(captured)
-            expanded = columns >= 80 and rows >= 24
+            expanded = columns >= HEADER_MIN_COLUMNS and rows >= HEADER_MIN_ROWS
             if expanded != any("█▄▄▄" in line for line in home):
                 raise RuntimeError("wordmark did not adapt to available space")
-            mascot = pixel_enabled and columns >= 90 and rows >= 24
+            mascot = pixel_enabled and expanded
             if mascot != (home_backgrounds > 0):
                 raise RuntimeError("pixel mascot did not follow size/color capabilities")
             result = {"colorfgbg": colorfgbg, "columns": columns, "rows": rows,
@@ -356,7 +371,7 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
 
 report = {"cases": [session(theme, width, height)
                     for theme in ("0;15", "15;0")
-                    for width, height in ((100, 28), (140, 40), (90, 24), (80, 24), (48, 16))],
+                    for width, height in ((100, 28), (140, 40), (60, 22), (59, 22), (60, 21), (48, 16))],
           "color_fallbacks": [session("15;0", 100, 28, color_profile=profile)
                               for profile in ("256", "none", "dumb", "unspecified")],
           "resize": [session(theme, 100, 28, resize_home=True) for theme in ("0;15", "15;0")],

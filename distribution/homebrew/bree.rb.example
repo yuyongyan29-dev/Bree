@@ -5,8 +5,8 @@
 class Bree < Formula
   desc "Local memory inspection for macOS"
   homepage "https://github.com/yuyongyan29-dev/Bree"
-  url "https://downloads.example.com/bree/releases/download/v0.3.0-alpha.4/bree-aarch64-apple-darwin", using: :nounzip
-  version "0.3.0-alpha.4"
+  url "https://downloads.example.com/bree/releases/download/v0.3.0-alpha.5/bree-aarch64-apple-darwin", using: :nounzip
+  version "0.3.0-alpha.5"
   sha256 "REPLACE_WITH_GENERATED_BINARY_SHA256"
   license "GPL-3.0-only"
 

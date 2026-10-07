@@ -26,7 +26,7 @@
 
 Bree brings system memory pressure, application usage, and process details into a terminal interface you can navigate with your keyboard. Find what is using memory, inspect the evidence behind each application's grouping and metrics, or follow changes with direct commands and JSON output.
 
-**Current version: `0.3.0-alpha.4`. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. Application quitting is disabled: this version does not stop applications. Rules and cleanup commands provide previews and session summaries.**
+**Current version: `0.3.0-alpha.5`. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. Application quitting is disabled: this version does not stop applications. Rules and cleanup commands provide previews and session summaries.**
 
 ## Installation
 
@@ -73,7 +73,7 @@ See the [installation guide](docs/installation.md) for updates, uninstalling, cu
 
 Missing or inaccessible data is explicitly marked instead of being reported as zero.
 
-When space and terminal color support allow, Home shows a static pixel mascot beside the Bree wordmark; otherwise it shows the wordmark alone, with a compact form for smaller windows. The mascot keeps its pixel colors, while ordinary background and text follow your terminal's light or dark theme. The artwork adds no animation, background worker, extra font, or runtime dependency. Direct commands and JSON output stay free of artwork.
+Home places a small static pixel icon directly before the Bree wordmark, with the memory overview and menu aligned on the left below it. Smaller windows use a compact header; terminals without supported colors show the wordmark without the icon. The icon keeps its pixel colors, while ordinary background and text follow your terminal's light or dark theme. The artwork adds no animation, background worker, extra font, or runtime dependency. Direct commands and JSON output stay free of artwork.
 
 Bree does not install a background service or launch at login. Force quitting and automatic background cleanup are unavailable.
 

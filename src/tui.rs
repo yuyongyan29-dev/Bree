@@ -46,9 +46,9 @@ const MUTED: Color = Color::Reset;
 const BACKGROUND: Color = Color::Reset;
 const MIN_WIDTH: u16 = 48;
 const MIN_HEIGHT: u16 = 16;
-const MASCOT_MIN_WIDTH: u16 = 90;
-const MASCOT_MIN_HEIGHT: u16 = 24;
-const MASCOT_GAP: u16 = 4;
+const MASCOT_MIN_WIDTH: u16 = 60;
+const MASCOT_MIN_HEIGHT: u16 = 22;
+const MASCOT_GAP: u16 = 3;
 
 type PanicHook = dyn Fn(&panic::PanicHookInfo<'_>) + Send + Sync + 'static;
 
@@ -2054,19 +2054,39 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
 
 fn render_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let mascot = home_mascot_rect(app, area);
-    let content = if let Some(mascot) = mascot {
-        brand::render(frame, mascot, app.color_depth);
-        Rect::new(
-            area.x + brand::WIDTH + MASCOT_GAP,
-            area.y,
-            area.width - brand::WIDTH - MASCOT_GAP,
-            area.height,
-        )
+    let expanded = area.width >= MASCOT_MIN_WIDTH - 4 && area.height >= MASCOT_MIN_HEIGHT - 2;
+    let header_height = if mascot.is_some() {
+        brand::HEIGHT + 1
+    } else if expanded {
+        4
     } else {
-        area
+        2
     };
-    let expanded = mascot.is_some() || (area.width >= 76 && area.height >= 22);
-    render_home_content(frame, app, content, expanded);
+    if let Some(mascot) = mascot {
+        brand::render(frame, mascot, app.color_depth);
+        let wordmark = Rect::new(
+            mascot.right() + MASCOT_GAP,
+            area.y + (brand::HEIGHT - 3) / 2,
+            area.width - brand::WIDTH - MASCOT_GAP,
+            3,
+        );
+        frame.render_widget(Paragraph::new(brand_header(true)), wordmark);
+    } else {
+        frame.render_widget(
+            Paragraph::new(brand_header(expanded)),
+            Rect::new(area.x, area.y, area.width, header_height),
+        );
+    }
+    render_home_content(
+        frame,
+        app,
+        Rect::new(
+            area.x,
+            area.y + header_height,
+            area.width,
+            area.height - header_height,
+        ),
+    );
 }
 
 fn home_mascot_rect(app: &App, area: Rect) -> Option<Rect> {
@@ -2076,7 +2096,7 @@ fn home_mascot_rect(app: &App, area: Rect) -> Option<Rect> {
         .then(|| Rect::new(area.x, area.y, brand::WIDTH, brand::HEIGHT))
 }
 
-fn render_home_content(frame: &mut Frame<'_>, app: &mut App, area: Rect, expanded: bool) {
+fn render_home_content(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let summary_height = if app.snapshot.is_some()
         && app.policy_error.is_some()
         && (app.error.is_some() || app.loading)
@@ -2085,17 +2105,18 @@ fn render_home_content(frame: &mut Frame<'_>, app: &mut App, area: Rect, expande
     } else {
         5
     };
+    let footer_gap = u16::from(area.height > summary_height + 4 + 2);
     let chunks = Layout::vertical([
-        Constraint::Length(if expanded { 4 } else { 2 }),
         Constraint::Length(summary_height),
-        Constraint::Min(4),
+        Constraint::Length(4),
+        Constraint::Length(footer_gap),
         Constraint::Length(2),
+        Constraint::Min(0),
     ])
     .split(area);
-    frame.render_widget(Paragraph::new(brand_header(expanded)), chunks[0]);
     frame.render_widget(
         Paragraph::new(summary(app, area.width < 76)).wrap(Wrap { trim: false }),
-        chunks[1],
+        chunks[0],
     );
     let pending = app.plan.as_ref().map_or_else(
         || "Analyzing".into(),
@@ -2117,7 +2138,7 @@ fn render_home_content(frame: &mut Frame<'_>, app: &mut App, area: Rect, expande
     let list = List::new(entries.map(ListItem::new))
         .highlight_symbol(selection_marker())
         .highlight_style(selection_style());
-    frame.render_stateful_widget(list, chunks[2], &mut app.menu);
+    frame.render_stateful_widget(list, chunks[1], &mut app.menu);
     frame.render_widget(
         Paragraph::new("↑↓ / 1–4 Select  Enter Open  R Refresh\nP Preview  S Settings  Q Quit")
             .style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)),
@@ -3050,11 +3071,11 @@ mod tests {
         let mut app = App::new(false);
         app.color_depth = ColorDepth::None;
         app.received(Ok(snapshot()));
-        for (width, height) in [(100, 28), (140, 40), (48, 16)] {
+        for (width, height) in [(100, 28), (140, 40), (60, 22), (59, 22), (60, 21), (48, 16)] {
             let (text, terminal) = screen(&mut app, width, height);
             assert_eq!(
                 text.contains("█▄▄▄"),
-                width >= 80,
+                width >= MASCOT_MIN_WIDTH && height >= MASCOT_MIN_HEIGHT,
                 "{width}x{height}: {text}"
             );
             for label in [
@@ -3118,7 +3139,7 @@ mod tests {
     }
 
     #[test]
-    fn full_mascot_home_keeps_real_data_menu_and_failures_visible_in_both_color_modes() {
+    fn compact_mascot_home_keeps_real_data_menu_and_failures_visible_in_both_color_modes() {
         for depth in [ColorDepth::Rgb, ColorDepth::Indexed256] {
             for state in 0..4 {
                 let mut app = App::new(false);
@@ -3142,12 +3163,12 @@ mod tests {
                     }
                     _ => {}
                 }
-                let (text, terminal) = screen(&mut app, 90, 24);
+                let (text, terminal) = screen(&mut app, 60, 22);
                 let buffer = terminal.backend().buffer();
-                let sprite = Rect::new(2, 1, 32, 16);
+                let sprite = Rect::new(2, 1, brand::WIDTH, brand::HEIGHT);
                 assert_mascot_canvas(buffer, Some(sprite));
-                assert_eq!(buffer[(38, 1)].symbol(), "█");
-                assert_eq!(buffer[(38, 1)].fg, ACCENT);
+                assert_eq!(buffer[(17, 2)].symbol(), "█");
+                assert_eq!(buffer[(17, 2)].fg, ACCENT);
                 assert!(buffer.content.iter().any(|cell| cell.bg != Color::Reset));
                 assert_eq!(app.menu.selected(), Some(2));
                 for label in [
@@ -3187,11 +3208,11 @@ mod tests {
         app.color_depth = ColorDepth::Rgb;
         app.received(Ok(snapshot()));
         for (width, height, full) in [
-            (90, 24, true),
+            (60, 22, true),
             (140, 40, true),
-            (89, 24, false),
-            (90, 23, false),
-            (80, 24, false),
+            (59, 22, false),
+            (60, 21, false),
+            (80, 24, true),
             (48, 16, false),
         ] {
             let (text, terminal) = screen(&mut app, width, height);
@@ -3207,18 +3228,21 @@ mod tests {
             );
             assert_mascot_canvas(
                 terminal.backend().buffer(),
-                full.then(|| Rect::new(2, 1, 32, 16)),
+                full.then(|| Rect::new(2, 1, brand::WIDTH, brand::HEIGHT)),
             );
             assert!(text.contains("> 3. Memory") && text.contains("Q Quit"));
         }
-        let (_, mut terminal) = screen(&mut app, 90, 24);
+        let (_, mut terminal) = screen(&mut app, 60, 22);
         terminal.backend_mut().resize(48, 16);
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         assert_mascot_canvas(terminal.backend().buffer(), None);
         assert!(buffer_text(terminal.backend().buffer()).contains("> 3. Memory"));
-        terminal.backend_mut().resize(90, 24);
+        terminal.backend_mut().resize(60, 22);
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
-        assert_mascot_canvas(terminal.backend().buffer(), Some(Rect::new(2, 1, 32, 16)));
+        assert_mascot_canvas(
+            terminal.backend().buffer(),
+            Some(Rect::new(2, 1, brand::WIDTH, brand::HEIGHT)),
+        );
         app.page = Page::Resources;
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         assert_mascot_canvas(terminal.backend().buffer(), None);
@@ -3227,6 +3251,40 @@ mod tests {
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         assert_mascot_canvas(terminal.backend().buffer(), None);
         assert!(buffer_text(terminal.backend().buffer()).contains("█▄▄▄"));
+    }
+
+    #[test]
+    fn home_body_stays_below_the_brand_and_left_aligned_with_nearby_navigation() {
+        for depth in [ColorDepth::Rgb, ColorDepth::Indexed256, ColorDepth::None] {
+            for (width, height) in [(60, 22), (140, 40), (48, 16)] {
+                let mut app = App::new(false);
+                app.color_depth = depth;
+                app.received(Ok(snapshot()));
+                let (text, _) = screen(&mut app, width, height);
+                let lines: Vec<_> = text.lines().collect();
+                let summary = lines
+                    .iter()
+                    .position(|line| line.starts_with("  Memory pressure:"))
+                    .expect("memory overview stays on the left baseline");
+                let menu = lines
+                    .iter()
+                    .position(|line| line.starts_with("  > 3. Memory"))
+                    .expect("selection marker stays on the left baseline");
+                let history = lines
+                    .iter()
+                    .position(|line| line.trim_start().starts_with("4. History"))
+                    .expect("fourth entry remains visible");
+                let footer = lines
+                    .iter()
+                    .position(|line| line.starts_with("  ↑↓ / 1–4 Select"))
+                    .expect("navigation stays on the left baseline");
+                assert!(summary < menu && menu < history && history < footer);
+                assert!(footer - history <= 2, "navigation follows the menu: {text}");
+                if depth != ColorDepth::None && width >= 60 && height >= 22 {
+                    assert!(summary > brand::HEIGHT as usize);
+                }
+            }
+        }
     }
 
     #[test]

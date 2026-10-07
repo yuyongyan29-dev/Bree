@@ -1,4 +1,4 @@
-//! Static, typed rendering of the approved 32 × 32 mascot pixel grid.
+//! Static, typed rendering of a compact icon from the approved 32 × 32 pixel grid.
 //! The source ANSI is decoded offline; no escape sequences reach the terminal.
 
 use ratatui::{
@@ -7,8 +7,9 @@ use ratatui::{
     style::{Color, Style},
 };
 
-pub(crate) const WIDTH: u16 = 32;
-pub(crate) const HEIGHT: u16 = 16;
+pub(crate) const WIDTH: u16 = 12;
+pub(crate) const HEIGHT: u16 = 6;
+const SOURCE_WIDTH: usize = 32;
 const TRANSPARENT: u8 = 6;
 const RGB: [Color; 6] = [
     Color::Rgb(40, 40, 40),
@@ -110,7 +111,27 @@ const fn decode_grid(source: &[u8]) -> [u8; 1024] {
     pixels
 }
 
-const PIXELS: [u8; 1024] = decode_grid(include_bytes!("../assets/bree-mascot.txt"));
+const SOURCE_PIXELS: [u8; 1024] = decode_grid(include_bytes!("../assets/bree-mascot.txt"));
+
+const fn compact_grid(source: &[u8; 1024]) -> [u8; WIDTH as usize * HEIGHT as usize * 2] {
+    let mut pixels = [TRANSPARENT; WIDTH as usize * HEIGHT as usize * 2];
+    let mut y = 0;
+    while y < HEIGHT as usize * 2 {
+        let source_y = (2 * y + 1) * SOURCE_WIDTH / (HEIGHT as usize * 4);
+        let mut x = 0;
+        while x < WIDTH as usize {
+            let source_x = (2 * x + 1) * SOURCE_WIDTH / (WIDTH as usize * 2);
+            pixels[y * WIDTH as usize + x] = source[source_y * SOURCE_WIDTH + source_x];
+            x += 1;
+        }
+        y += 1;
+    }
+    pixels
+}
+
+// Pixel-center sampling retains the approved palette and transparency without
+// interpolation, image dependencies, or terminal escape sequences at runtime.
+const PIXELS: [u8; WIDTH as usize * HEIGHT as usize * 2] = compact_grid(&SOURCE_PIXELS);
 
 pub(crate) fn render(frame: &mut Frame<'_>, area: Rect, depth: ColorDepth) {
     if depth == ColorDepth::None || area.width < WIDTH || area.height < HEIGHT {
@@ -192,17 +213,33 @@ mod tests {
     }
 
     #[test]
-    fn all_six_original_tones_and_transparent_halves_render_as_typed_cells() {
+    fn compact_icon_preserves_source_tones_and_transparency_as_typed_cells() {
         assert_eq!(
-            PIXELS.iter().filter(|pixel| **pixel != TRANSPARENT).count(),
+            SOURCE_PIXELS
+                .iter()
+                .filter(|pixel| **pixel != TRANSPARENT)
+                .count(),
             555
         );
         for (index, count) in [64, 69, 7, 44, 87, 284].into_iter().enumerate() {
             assert_eq!(
-                PIXELS.iter().filter(|pixel| **pixel == index as u8).count(),
+                SOURCE_PIXELS
+                    .iter()
+                    .filter(|pixel| **pixel == index as u8)
+                    .count(),
                 count
             );
         }
+        assert_eq!(PIXELS.len(), 12 * 12);
+        assert!(PIXELS.iter().all(|pixel| *pixel <= TRANSPARENT));
+        assert!(
+            PIXELS[..WIDTH as usize]
+                .iter()
+                .all(|pixel| *pixel == TRANSPARENT)
+        );
+        assert!(PIXELS.contains(&0));
+        assert!(PIXELS.contains(&1));
+        assert!(PIXELS.contains(&5));
         for depth in [ColorDepth::Rgb, ColorDepth::Indexed256] {
             let mut terminal = Terminal::new(TestBackend::new(36, 18)).unwrap();
             terminal
@@ -232,6 +269,21 @@ mod tests {
                 assert_eq!(buffer[(x, 0)].bg, Color::Reset);
                 assert_eq!(buffer[(x, 17)].bg, Color::Reset);
             }
+        }
+    }
+
+    #[test]
+    fn compact_icon_does_not_paint_disabled_or_insufficient_areas() {
+        for (depth, area) in [
+            (ColorDepth::None, Rect::new(2, 1, WIDTH, HEIGHT)),
+            (ColorDepth::Rgb, Rect::new(2, 1, WIDTH - 1, HEIGHT)),
+            (ColorDepth::Rgb, Rect::new(2, 1, WIDTH, HEIGHT - 1)),
+        ] {
+            let mut terminal = Terminal::new(TestBackend::new(20, 10)).unwrap();
+            terminal.draw(|frame| render(frame, area, depth)).unwrap();
+            assert!(terminal.backend().buffer().content.iter().all(|cell| {
+                cell.symbol() == " " && cell.fg == Color::Reset && cell.bg == Color::Reset
+            }));
         }
     }
 }
