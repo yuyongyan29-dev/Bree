@@ -16,3 +16,8 @@ __pycache__/
 outputs/
 docs/internal/
 design/
+
+# Local mascot design outputs; the CLI embeds assets/bree-mascot.txt.
+assets/bree-mascot-terminal-pixel.png
+assets/bree-mascot-terminal-pixel.ansi
+assets/bree-mascot-terminal-pixel.md
