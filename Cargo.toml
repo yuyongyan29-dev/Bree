@@ -1,6 +1,6 @@
 [package]
 name = "bree-cli"
-version = "0.3.0-alpha.5"
+version = "0.3.0-alpha.6"
 edition = "2024"
 rust-version = "1.96"
 description = "Local memory inspection and guarded cleanup sessions for macOS"

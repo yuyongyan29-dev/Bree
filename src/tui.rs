@@ -47,7 +47,8 @@ const BACKGROUND: Color = Color::Reset;
 const MIN_WIDTH: u16 = 48;
 const MIN_HEIGHT: u16 = 16;
 const MASCOT_MIN_WIDTH: u16 = 60;
-const MASCOT_MIN_HEIGHT: u16 = 22;
+const MASCOT_MIN_HEIGHT: u16 = 26;
+const WORDMARK_MIN_HEIGHT: u16 = 22;
 const MASCOT_GAP: u16 = 3;
 
 type PanicHook = dyn Fn(&panic::PanicHookInfo<'_>) + Send + Sync + 'static;
@@ -2054,7 +2055,7 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
 
 fn render_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let mascot = home_mascot_rect(app, area);
-    let expanded = area.width >= MASCOT_MIN_WIDTH - 4 && area.height >= MASCOT_MIN_HEIGHT - 2;
+    let expanded = area.width >= MASCOT_MIN_WIDTH - 4 && area.height >= WORDMARK_MIN_HEIGHT - 2;
     let header_height = if mascot.is_some() {
         brand::HEIGHT + 1
     } else if expanded {
@@ -3071,11 +3072,20 @@ mod tests {
         let mut app = App::new(false);
         app.color_depth = ColorDepth::None;
         app.received(Ok(snapshot()));
-        for (width, height) in [(100, 28), (140, 40), (60, 22), (59, 22), (60, 21), (48, 16)] {
+        for (width, height) in [
+            (100, 28),
+            (140, 40),
+            (60, 26),
+            (60, 25),
+            (60, 22),
+            (59, 22),
+            (60, 21),
+            (48, 16),
+        ] {
             let (text, terminal) = screen(&mut app, width, height);
             assert_eq!(
                 text.contains("█▄▄▄"),
-                width >= MASCOT_MIN_WIDTH && height >= MASCOT_MIN_HEIGHT,
+                width >= MASCOT_MIN_WIDTH && height >= WORDMARK_MIN_HEIGHT,
                 "{width}x{height}: {text}"
             );
             for label in [
@@ -3163,12 +3173,12 @@ mod tests {
                     }
                     _ => {}
                 }
-                let (text, terminal) = screen(&mut app, 60, 22);
+                let (text, terminal) = screen(&mut app, 60, 26);
                 let buffer = terminal.backend().buffer();
                 let sprite = Rect::new(2, 1, brand::WIDTH, brand::HEIGHT);
                 assert_mascot_canvas(buffer, Some(sprite));
-                assert_eq!(buffer[(17, 2)].symbol(), "█");
-                assert_eq!(buffer[(17, 2)].fg, ACCENT);
+                assert_eq!(buffer[(25, 4)].symbol(), "█");
+                assert_eq!(buffer[(25, 4)].fg, ACCENT);
                 assert!(buffer.content.iter().any(|cell| cell.bg != Color::Reset));
                 assert_eq!(app.menu.selected(), Some(2));
                 for label in [
@@ -3208,11 +3218,14 @@ mod tests {
         app.color_depth = ColorDepth::Rgb;
         app.received(Ok(snapshot()));
         for (width, height, full) in [
-            (60, 22, true),
+            (60, 26, true),
             (140, 40, true),
-            (59, 22, false),
+            (59, 26, false),
+            (60, 25, false),
+            (60, 22, false),
             (60, 21, false),
-            (80, 24, true),
+            (80, 24, false),
+            (80, 26, true),
             (48, 16, false),
         ] {
             let (text, terminal) = screen(&mut app, width, height);
@@ -3232,12 +3245,16 @@ mod tests {
             );
             assert!(text.contains("> 3. Memory") && text.contains("Q Quit"));
         }
-        let (_, mut terminal) = screen(&mut app, 60, 22);
+        let (_, mut terminal) = screen(&mut app, 60, 26);
+        terminal.backend_mut().resize(60, 25);
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_mascot_canvas(terminal.backend().buffer(), None);
+        assert!(buffer_text(terminal.backend().buffer()).contains("█▄▄▄"));
         terminal.backend_mut().resize(48, 16);
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         assert_mascot_canvas(terminal.backend().buffer(), None);
         assert!(buffer_text(terminal.backend().buffer()).contains("> 3. Memory"));
-        terminal.backend_mut().resize(60, 22);
+        terminal.backend_mut().resize(60, 26);
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         assert_mascot_canvas(
             terminal.backend().buffer(),
@@ -3256,7 +3273,7 @@ mod tests {
     #[test]
     fn home_body_stays_below_the_brand_and_left_aligned_with_nearby_navigation() {
         for depth in [ColorDepth::Rgb, ColorDepth::Indexed256, ColorDepth::None] {
-            for (width, height) in [(60, 22), (140, 40), (48, 16)] {
+            for (width, height) in [(60, 26), (60, 25), (60, 22), (140, 40), (48, 16)] {
                 let mut app = App::new(false);
                 app.color_depth = depth;
                 app.received(Ok(snapshot()));
@@ -3280,7 +3297,7 @@ mod tests {
                     .expect("navigation stays on the left baseline");
                 assert!(summary < menu && menu < history && history < footer);
                 assert!(footer - history <= 2, "navigation follows the menu: {text}");
-                if depth != ColorDepth::None && width >= 60 && height >= 22 {
+                if depth != ColorDepth::None && width >= 60 && height >= 26 {
                     assert!(summary > brand::HEIGHT as usize);
                 }
             }

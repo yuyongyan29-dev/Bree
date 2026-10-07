@@ -6,7 +6,7 @@ Bree 免费提供，提供 Homebrew 和 curl 两个安装入口。两者使用�
 
 | 项目 | 当前范围 |
 |---|---|
-| 程序版本 | `0.3.0-alpha.5` |
+| 程序版本 | `0.3.0-alpha.6` |
 | 架构 | 原生 Apple Silicon（arm64） |
 | 已验证系统 | macOS 27.0.1 |
 | Homebrew bottle | Apple Silicon、macOS 27 |
@@ -83,7 +83,7 @@ curl -fsSL https://raw.githubusercontent.com/yuyongyan29-dev/Bree/main/distribut
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/yuyongyan29-dev/Bree/main/distribution/install.sh \
-  | sh -s -- --version 0.3.0-alpha.5
+  | sh -s -- --version 0.3.0-alpha.6
 ```
 
 再次执行默认安装命令即可升级到安装器选择的版本，也可以显式使用 `--version latest`。下载地址可通过 `BREE_RELEASE_BASE_URL` 指向自己的 HTTPS Release 镜像，路径应遵循本仓库的发行资产布局；可用 `BREE_VERSION_URL` 指定 HTTPS 版本元数据地址。

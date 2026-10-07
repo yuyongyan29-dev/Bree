@@ -30,8 +30,9 @@ PIXEL_RGB = {(40, 40, 40), (77, 77, 77), (134, 134, 132),
 PIXEL_INDEXED = {236, 239, 244, 250, 253, 231}
 HEADER_MIN_COLUMNS = 60
 HEADER_MIN_ROWS = 22
-MASCOT_WIDTH = 12
-MASCOT_HEIGHT = 6
+MASCOT_MIN_ROWS = 26
+MASCOT_WIDTH = 20
+MASCOT_HEIGHT = 10
 
 
 def pixel_color(color):
@@ -82,7 +83,7 @@ class Screen:
                 if self.x < self.columns:
                     if self.background is not None:
                         if not (self.pixel_enabled and self.columns >= HEADER_MIN_COLUMNS
-                                and self.rows >= HEADER_MIN_ROWS
+                                and self.rows >= MASCOT_MIN_ROWS
                                 and 2 <= self.x < 2 + MASCOT_WIDTH
                                 and 1 <= self.y < 1 + MASCOT_HEIGHT
                                 and char == "▀" and pixel_color(self.foreground)
@@ -298,7 +299,7 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
                         if exit_key not in screen.text():
                             raise RuntimeError(f"page exit key clipped: stage {current}\n{screen.text()}")
                     expected_mascot = (pixel_enabled and screen.columns >= HEADER_MIN_COLUMNS
-                                       and screen.rows >= HEADER_MIN_ROWS)
+                                       and screen.rows >= MASCOT_MIN_ROWS)
                     if resize_home:
                         actual_mascot = screen.colored_background_count() > 0
                         if actual_mascot != expected_mascot:
@@ -333,7 +334,7 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
             expanded = columns >= HEADER_MIN_COLUMNS and rows >= HEADER_MIN_ROWS
             if expanded != any("█▄▄▄" in line for line in home):
                 raise RuntimeError("wordmark did not adapt to available space")
-            mascot = pixel_enabled and expanded
+            mascot = pixel_enabled and columns >= HEADER_MIN_COLUMNS and rows >= MASCOT_MIN_ROWS
             if mascot != (home_backgrounds > 0):
                 raise RuntimeError("pixel mascot did not follow size/color capabilities")
             result = {"colorfgbg": colorfgbg, "columns": columns, "rows": rows,
@@ -371,7 +372,8 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
 
 report = {"cases": [session(theme, width, height)
                     for theme in ("0;15", "15;0")
-                    for width, height in ((100, 28), (140, 40), (60, 22), (59, 22), (60, 21), (48, 16))],
+                    for width, height in ((100, 28), (140, 40), (60, 26), (59, 26), (60, 25),
+                                          (60, 22), (60, 21), (48, 16))],
           "color_fallbacks": [session("15;0", 100, 28, color_profile=profile)
                               for profile in ("256", "none", "dumb", "unspecified")],
           "resize": [session(theme, 100, 28, resize_home=True) for theme in ("0;15", "15;0")],

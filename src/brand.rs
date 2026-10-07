@@ -7,8 +7,8 @@ use ratatui::{
     style::{Color, Style},
 };
 
-pub(crate) const WIDTH: u16 = 12;
-pub(crate) const HEIGHT: u16 = 6;
+pub(crate) const WIDTH: u16 = 20;
+pub(crate) const HEIGHT: u16 = 10;
 const SOURCE_WIDTH: usize = 32;
 const TRANSPARENT: u8 = 6;
 const RGB: [Color; 6] = [
@@ -230,7 +230,7 @@ mod tests {
                 count
             );
         }
-        assert_eq!(PIXELS.len(), 12 * 12);
+        assert_eq!(PIXELS.len(), 20 * 20);
         assert!(PIXELS.iter().all(|pixel| *pixel <= TRANSPARENT));
         assert!(
             PIXELS[..WIDTH as usize]
