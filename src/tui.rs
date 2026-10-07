@@ -25,6 +25,7 @@ use ratatui::{
 };
 
 use crate::attribution::label_process;
+use crate::brand::{self, ColorDepth};
 use crate::cleanup::{self, CleanupMode, CleanupResult, Session};
 use crate::collect::{Collector, pump_platform_events};
 use crate::history::{self, HistoryItem};
@@ -45,6 +46,9 @@ const MUTED: Color = Color::Reset;
 const BACKGROUND: Color = Color::Reset;
 const MIN_WIDTH: u16 = 48;
 const MIN_HEIGHT: u16 = 16;
+const MASCOT_MIN_WIDTH: u16 = 90;
+const MASCOT_MIN_HEIGHT: u16 = 24;
+const MASCOT_GAP: u16 = 4;
 
 type PanicHook = dyn Fn(&panic::PanicHookInfo<'_>) + Send + Sync + 'static;
 
@@ -247,6 +251,7 @@ struct App {
     sort: Sort,
     query: String,
     search_editor: Option<SearchEditor>,
+    color_depth: ColorDepth,
     selected_group: Option<String>,
     detail_scroll: u16,
     notice: Option<String>,
@@ -286,6 +291,7 @@ impl App {
             sort: Sort::Memory,
             query: String::new(),
             search_editor: None,
+            color_depth: ColorDepth::from_environment(),
             selected_group: None,
             detail_scroll: 0,
             notice: None,
@@ -2047,7 +2053,30 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
 }
 
 fn render_home(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let expanded = area.width >= 76 && area.height >= 22;
+    let mascot = home_mascot_rect(app, area);
+    let content = if let Some(mascot) = mascot {
+        brand::render(frame, mascot, app.color_depth);
+        Rect::new(
+            area.x + brand::WIDTH + MASCOT_GAP,
+            area.y,
+            area.width - brand::WIDTH - MASCOT_GAP,
+            area.height,
+        )
+    } else {
+        area
+    };
+    let expanded = mascot.is_some() || (area.width >= 76 && area.height >= 22);
+    render_home_content(frame, app, content, expanded);
+}
+
+fn home_mascot_rect(app: &App, area: Rect) -> Option<Rect> {
+    (app.color_depth != ColorDepth::None
+        && area.width >= MASCOT_MIN_WIDTH - 4
+        && area.height >= MASCOT_MIN_HEIGHT - 2)
+        .then(|| Rect::new(area.x, area.y, brand::WIDTH, brand::HEIGHT))
+}
+
+fn render_home_content(frame: &mut Frame<'_>, app: &mut App, area: Rect, expanded: bool) {
     let summary_height = if app.snapshot.is_some()
         && app.policy_error.is_some()
         && (app.error.is_some() || app.loading)
@@ -2981,6 +3010,7 @@ mod tests {
     fn terminal_theme_inherits_background_and_normal_text_even_in_popups() {
         let store = TestStore::new();
         let mut app = store.app();
+        app.color_depth = ColorDepth::None;
         app.received(Ok(scoped_snapshot("Fixture")));
         for (width, height) in [(100, 32), (60, 20), (30, 10)] {
             let (_, terminal) = screen(&mut app, width, height);
@@ -3018,6 +3048,7 @@ mod tests {
     #[test]
     fn brand_adapts_to_desktop_and_compact_windows_without_hiding_navigation() {
         let mut app = App::new(false);
+        app.color_depth = ColorDepth::None;
         app.received(Ok(snapshot()));
         for (width, height) in [(100, 28), (140, 40), (48, 16)] {
             let (text, terminal) = screen(&mut app, width, height);
@@ -3054,6 +3085,148 @@ mod tests {
                 && cell.fg == ACCENT
                 && cell.modifier.contains(Modifier::BOLD)));
         }
+    }
+
+    fn assert_mascot_canvas(buffer: &ratatui::buffer::Buffer, mascot: Option<Rect>) {
+        for y in buffer.area.top()..buffer.area.bottom() {
+            let mut x = buffer.area.left();
+            while x < buffer.area.right() {
+                let cell = &buffer[(x, y)];
+                let inside = mascot.is_some_and(|rect| {
+                    x >= rect.x && x < rect.right() && y >= rect.y && y < rect.bottom()
+                });
+                assert!(!cell.modifier.contains(Modifier::REVERSED));
+                if cell.bg != Color::Reset {
+                    assert!(inside, "background outside sprite at {x},{y}: {cell:?}");
+                    assert_eq!(cell.symbol(), "▀");
+                }
+                if !inside {
+                    assert_eq!(cell.bg, Color::Reset);
+                    assert!(
+                        matches!(cell.fg, Color::Reset) || cell.fg == ACCENT,
+                        "foreground outside sprite at {x},{y}: {cell:?}"
+                    );
+                } else if cell.symbol() == " " {
+                    assert_eq!(cell.fg, Color::Reset);
+                    assert_eq!(cell.bg, Color::Reset);
+                }
+                // TestBackend retains an old value under a wide glyph's continuation;
+                // a terminal paints that cell with the leading glyph's current style.
+                x += Line::from(cell.symbol()).width().max(1) as u16;
+            }
+        }
+    }
+
+    #[test]
+    fn full_mascot_home_keeps_real_data_menu_and_failures_visible_in_both_color_modes() {
+        for depth in [ColorDepth::Rgb, ColorDepth::Indexed256] {
+            for state in 0..4 {
+                let mut app = App::new(false);
+                app.color_depth = depth;
+                match state {
+                    1 => app.received(Err(
+                        "A long initial read failure; no data could be read".into()
+                    )),
+                    2 => app.received(Ok(snapshot())),
+                    3 => {
+                        let mut sample = snapshot();
+                        sample.system.used_bytes =
+                            Metric::unavailable(Validity::Denied, "fixture", "permission denied");
+                        sample.system.total_bytes =
+                            Metric::unavailable(Validity::Denied, "fixture", "permission denied");
+                        app.received(Ok(sample));
+                        app.received(Err(
+                            "Long refresh failure with details that must not hide the menu".into(),
+                        ));
+                        app.policy_error = Some("Rules unavailable".into());
+                    }
+                    _ => {}
+                }
+                let (text, terminal) = screen(&mut app, 90, 24);
+                let buffer = terminal.backend().buffer();
+                let sprite = Rect::new(2, 1, 32, 16);
+                assert_mascot_canvas(buffer, Some(sprite));
+                assert_eq!(buffer[(38, 1)].symbol(), "█");
+                assert_eq!(buffer[(38, 1)].fg, ACCENT);
+                assert!(buffer.content.iter().any(|cell| cell.bg != Color::Reset));
+                assert_eq!(app.menu.selected(), Some(2));
+                for label in [
+                    "1. Clean",
+                    "2. Needs review",
+                    "> 3. Memory",
+                    "4. History",
+                    "R Refresh",
+                    "S Settings",
+                    "Q Quit",
+                ] {
+                    assert!(
+                        text.contains(label),
+                        "depth {depth:?}, state {state}: missing {label}\n{text}"
+                    );
+                }
+                match state {
+                    0 => assert!(text.contains("Analyzing")),
+                    1 => assert!(
+                        text.contains("Read failed") && text.contains("Unknown memory is not zero")
+                    ),
+                    2 => assert!(text.contains("Memory pressure") && text.contains("8.00 GiB")),
+                    3 => assert!(
+                        text.contains("Denied")
+                            && text.contains("Previous data")
+                            && text.contains("Rules unreadable")
+                    ),
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mascot_thresholds_and_resize_clear_all_old_image_cells_without_changing_selection() {
+        let mut app = App::new(false);
+        app.color_depth = ColorDepth::Rgb;
+        app.received(Ok(snapshot()));
+        for (width, height, full) in [
+            (90, 24, true),
+            (140, 40, true),
+            (89, 24, false),
+            (90, 23, false),
+            (80, 24, false),
+            (48, 16, false),
+        ] {
+            let (text, terminal) = screen(&mut app, width, height);
+            assert_eq!(
+                terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .any(|cell| cell.bg != Color::Reset),
+                full,
+                "{width}x{height}"
+            );
+            assert_mascot_canvas(
+                terminal.backend().buffer(),
+                full.then(|| Rect::new(2, 1, 32, 16)),
+            );
+            assert!(text.contains("> 3. Memory") && text.contains("Q Quit"));
+        }
+        let (_, mut terminal) = screen(&mut app, 90, 24);
+        terminal.backend_mut().resize(48, 16);
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_mascot_canvas(terminal.backend().buffer(), None);
+        assert!(buffer_text(terminal.backend().buffer()).contains("> 3. Memory"));
+        terminal.backend_mut().resize(90, 24);
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_mascot_canvas(terminal.backend().buffer(), Some(Rect::new(2, 1, 32, 16)));
+        app.page = Page::Resources;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_mascot_canvas(terminal.backend().buffer(), None);
+        app.page = Page::Home;
+        app.color_depth = ColorDepth::None;
+        terminal.draw(|frame| render(frame, &mut app)).unwrap();
+        assert_mascot_canvas(terminal.backend().buffer(), None);
+        assert!(buffer_text(terminal.backend().buffer()).contains("█▄▄▄"));
     }
 
     #[test]
