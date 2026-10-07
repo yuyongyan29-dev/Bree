@@ -1,6 +1,6 @@
 # 使用 Bree
 
-Bree 在终端查看本机系统内存与应用／进程占用，提供规则、预演和处理记录。当前版本为 `0.3.0-alpha.2`，已验证环境是 Apple Silicon、macOS 27.0.1。
+Bree 在终端查看本机系统内存与应用／进程占用，提供规则、预演和处理记录。当前版本为 `0.3.0-alpha.3`，已验证环境是 Apple Silicon、macOS 27.0.1。
 
 **应用正常退出功能尚未启用，当前程序不会向应用发送退出请求。** 允许规则也不会产生可执行的清理候选，`clean` 只会生成零目标或跳过结果。当前版本不提供强制结束、后台自动清理或开机启动。
 
@@ -14,13 +14,17 @@ Bree 在终端查看本机系统内存与应用／进程占用，提供规则、
 |---|---|
 | ↑／↓、Enter | 选择与进入 |
 | R | 刷新当前页面 |
-| Esc | 返回；处理会话中取消当次 |
+| Esc | 取消搜索编辑；已有查询时先清空，再返回；处理会话中取消当次 |
 | S | 设置 |
-| Q／Ctrl+C | 退出；处理会话中先取消 |
+| Q／Ctrl+C | 非搜索编辑状态下 Q 退出，编辑时 Q 输入文本；Memory 页 Ctrl+C 始终退出，处理会话中先取消 |
 
 最小交互尺寸为 48 列 × 16 行。背景与普通文字继承终端默认色，适配浅色和深色终端；顶部显示 Bree 字标，窄窗口采用紧凑布局。无需额外图标字体。
 
 首页 P 打开 Preview（只读预演），History 查看处理历史。Clean 入口会说明正常退出能力未启用，Needs review 用于查看待确认项目。
+
+Memory 页按 `/` 进入搜索编辑，Enter 提交，Esc 取消编辑并保留原查询；Ctrl+U 清空编辑框，Backspace 逐字符删除。编辑时字母 Q 输入文本，Ctrl+C 始终退出。退出编辑后，有已应用查询时 Esc 先清空查询，再按 Esc 返回首页。应用查询后，Tab 仍切换分类筛选，O 切换内存／名称排序，R 刷新。搜索只影响显示，不修改分类、规则或清理候选。
+
+编辑框清空或修改后仍需 Enter 才应用。界面的 `N/M matching in filter` 中，N 为当前查询匹配数，M 为当前分类在查询前的分组数；无匹配时显示 `No matches in this filter`。
 
 ## 直接命令
 
@@ -28,6 +32,7 @@ Bree 在终端查看本机系统内存与应用／进程占用，提供规则、
 bree status                  # 单次系统内存概览
 bree status --json
 bree list --limit 20          # 按应用归属分组查看占用
+bree list --search Safari --sort name  # 搜索匹配分组并按名称排序
 bree list --json
 bree inspect '<对象 ID>'     # 使用 list 返回的 ID 查看当前实例
 bree inspect '<对象 ID>' --json
@@ -42,7 +47,11 @@ bree history --json --limit 20
 
 无交互终端时，裸 `bree` 输出帮助。`watch` 在交互终端显示界面，在管道中输出文本，`--json` 则逐行输出 JSON 快照。`--count` 限制采样次数，`--interval` 可指定 1–60 秒间隔。
 
-`list --limit` 限制显示的组数，JSON 仍保留完整进程表和覆盖统计。`inspect` 会重新采样，只查看仍匹配的当前实例；旧 ID 不会被重新绑定到替代进程，也不可当作停止凭据。
+`list` 默认使用 `--sort memory` 按内存占用排序，也可使用 `--sort name` 按分组名排序。`--search` 忽略查询首尾空白与大小写；非纯数字查询按应用分组名、成员进程名或成员 bundle ID 做子串匹配。纯数字查询只按完整 PID 精确匹配，不匹配名称子串或 PID 前缀。空查询不限制结果，不扫描路径、完整命令行或环境变量。
+
+查询最多 128 个 Unicode 字符，原输入的首尾空白也计入长度；控制字符和双向格式控制符会被拒绝。TUI 和直接命令使用相同的查询范围与限制。
+
+`list --limit` 限制查询和排序后显示的组数。JSON 的 `groups` 为显示结果，`processes`、`coverage` 和 `policy` 仍保留完整样本；搜索不重算分类，不改变规则或清理候选。`inspect` 会重新采样，只查看仍匹配的当前实例；旧 ID 不会被重新绑定到替代进程，也不可当作停止凭据。
 
 `doctor` 不申请系统权限、不执行清理，也不通过写文件探测数据目录；`write_status: not_probed` 不保证未来写入一定成功。普通查看无需额外权限，不可读取的进程指标会明确说明。
 
@@ -83,6 +92,8 @@ bree clean --yes --json
 ## JSON 与退出码
 
 JSON 的 `schema_version` 为 1。数值内部使用字节，文本显示 MiB／GiB。每个指标包含 `value`、`status`、`source` 和 `reason`；未知或无权限时使用 `null`，不填零。
+
+`list` 新增 `view` 元数据：`search` 为查询，`sort` 为排序方式，`total_groups` 为完整样本的分组总数，`matched_groups` 为查询匹配数，`shown_groups` 为限制数量后显示的分组数。`groups` 受查询、排序与 `--limit` 影响，`processes`、`coverage`、`policy` 保留完整样本，`schema_version` 仍为 1。
 
 `list`／`watch` 输出含策略分类及有效性；`clean --dry-run` 含采样时间、规则修订、分类数量、逐项理由与 `read_only: true`。会话结果另含运行 ID、逐项事实、资源变化、取消标记和错误；缺失的操作后资源为 `null`。
 

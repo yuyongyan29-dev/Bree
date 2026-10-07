@@ -39,6 +39,133 @@ fn all_command_help_is_in_english() {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn unmatched_list_query_keeps_full_process_coverage_and_policy_without_writing_state() {
+    let root = std::env::temp_dir().join(format!("bree-list-query-{}", std::process::id()));
+    assert!(!root.exists());
+    let output = Command::new(env!("CARGO_BIN_EXE_bree"))
+        .env("BREE_DATA_DIR", &root)
+        .args([
+            "list",
+            "--json",
+            "--search",
+            "bree-no-match-673882c5-7a63",
+            "--sort",
+            "name",
+            "--limit",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let data: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(data["schema_version"], 1);
+    assert!(data["groups"].as_array().unwrap().is_empty());
+    assert_eq!(data["view"]["matched_groups"], 0);
+    assert_eq!(data["view"]["shown_groups"], 0);
+    assert_eq!(data["view"]["sort"], "name");
+    assert!(!data["processes"].as_array().unwrap().is_empty());
+    assert!(data["coverage"]["enumerated_processes"].as_u64().unwrap() > 0);
+    assert_eq!(
+        data["policy"]["entries"].as_array().unwrap().len() as u64,
+        data["view"]["total_groups"].as_u64().unwrap()
+    );
+    assert_eq!(data["policy"]["automatic_count"], 0);
+    assert!(!root.exists());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn list_search_sort_and_limit_are_applied_in_that_order() {
+    let output = bree(&[
+        "list", "--json", "--search", "  BrEe  ", "--sort", "name", "--limit", "1",
+    ]);
+    assert!(output.status.success());
+    let data: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(data["view"]["search"], "BrEe");
+    assert_eq!(data["view"]["sort"], "name");
+    let groups = data["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(data["view"]["shown_groups"], 1);
+    assert!(data["view"]["matched_groups"].as_u64().unwrap() >= 1);
+    for group in groups {
+        let members = group["process_ids"].as_array().unwrap();
+        assert!(
+            group["name"]
+                .as_str()
+                .unwrap()
+                .to_lowercase()
+                .contains("bree")
+                || data["processes"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|p| members.contains(&p["id"])
+                        && p["name"].as_str().unwrap().to_lowercase().contains("bree"))
+        );
+    }
+    let all_names = bree(&["list", "--json", "--sort", "name", "--limit", "20"]);
+    assert!(all_names.status.success());
+    let names: Value = serde_json::from_slice(&all_names.stdout).unwrap();
+    assert_eq!(
+        names["view"]["total_groups"],
+        names["view"]["matched_groups"]
+    );
+    let groups = names["groups"].as_array().unwrap();
+    assert!(
+        groups
+            .windows(2)
+            .all(|pair| pair[0]["name"].as_str().unwrap().to_lowercase()
+                <= pair[1]["name"].as_str().unwrap().to_lowercase())
+    );
+    let zero = bree(&["list", "--json", "--search", "bree", "--limit", "0"]);
+    assert!(zero.status.success());
+    let zero: Value = serde_json::from_slice(&zero.stdout).unwrap();
+    assert!(zero["groups"].as_array().unwrap().is_empty());
+    assert!(zero["view"]["matched_groups"].as_u64().unwrap() >= 1);
+    assert_eq!(zero["view"]["shown_groups"], 0);
+}
+
+#[test]
+fn invalid_search_and_sort_are_rejected_before_sampling() {
+    for (option, value) in [
+        ("--search", "unsafe\ninput".into()),
+        ("--search", "中".repeat(129)),
+        ("--sort", "cpu".into()),
+    ] {
+        let output = bree(&["list", option, &value, "--json"]);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert!(!output.stderr.is_empty());
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn numeric_list_query_returns_only_the_group_containing_the_exact_pid() {
+    let pid = std::process::id().to_string();
+    let output = bree(&["list", "--json", "--search", &pid]);
+    assert!(output.status.success());
+    let data: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let groups = data["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 1);
+    let process = data["processes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["identity"]["pid"].as_u64() == Some(std::process::id() as u64))
+        .unwrap();
+    assert!(
+        groups[0]["process_ids"]
+            .as_array()
+            .unwrap()
+            .contains(&process["id"])
+    );
+    assert_eq!(data["view"]["matched_groups"], 1);
+}
+
 #[test]
 fn installed_program_carries_project_and_dependency_notices_without_storage() {
     let directory = std::env::temp_dir().join(format!("bree-license-test-{}", std::process::id()));

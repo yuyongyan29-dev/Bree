@@ -26,7 +26,7 @@
 
 Bree brings system memory pressure, application usage, and process details into a terminal interface you can navigate with your keyboard. Find what is using memory, inspect the evidence behind each application's grouping and metrics, or follow changes with direct commands and JSON output.
 
-**Current version: `0.3.0-alpha.2`. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. Application quitting is disabled: this version does not stop applications. Rules and cleanup commands provide previews and session summaries.**
+**Current version: `0.3.0-alpha.3`. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. Application quitting is disabled: this version does not stop applications. Rules and cleanup commands provide previews and session summaries.**
 
 ## Installation
 
@@ -67,7 +67,7 @@ See the [installation guide](docs/installation.md) for updates, uninstalling, cu
 | What you want to know | What Bree shows |
 |---|---|
 | How is my Mac's memory doing? | Total and used memory, compression, swap, and memory pressure |
-| Which application or process is using memory? | Application groups supported by evidence, process instances, installation paths, and metric sources |
+| Which application or process is using memory? | Application groups supported by evidence, process details, and search by name, bundle ID, or PID |
 | Is usage still changing? | Foreground monitoring and text, JSON, or JSONL output |
 | Why is an item protected or skipped? | Allow and protect rules, classification reasons, read-only previews, and session history |
 
@@ -79,6 +79,7 @@ Missing or inaccessible data is explicitly marked instead of being reported as z
 bree                         # Open the terminal interface
 bree status                  # Show system memory
 bree list --limit 20          # List application and process usage
+bree list --search Safari --sort name  # Find matching groups and sort by name
 bree inspect '<object ID>'    # Inspect an ID returned by list
 bree watch                   # Monitor in the foreground
 bree doctor                  # Check capabilities and data availability
@@ -87,16 +88,21 @@ bree history --json           # Read session history
 bree license                  # Display the GPL-3.0 license
 ```
 
-**Up/Down** select · **Enter** open · **R** refresh · **Esc** back · **S** settings · **Q/Ctrl+C** quit. The minimum interactive window size is 48 columns by 16 rows.
+Lists are sorted by memory by default; use `--sort name` to sort by group name. Search ignores case and surrounding whitespace. Non-numeric queries match substrings of group names, member process names, or member bundle IDs. Purely numeric queries match only a complete PID, not name substrings or PID prefixes. It does not search paths, full command lines, or environment variables.
+
+In the **Memory** page, press **/** to edit a search, **Enter** to apply it, or **Esc** to discard edits and keep the previous search. Outside the editor, **Esc** first clears an applied search, then returns home. **Ctrl+U** clears the input and **Backspace** deletes one character. **Q** is text while editing; **Ctrl+C** always quits. Applied searches work with filters, sorting, and refresh. Search changes only the displayed list, not rules, classifications, or cleanup candidates.
+
+**Up/Down** select · **Enter** open · **R** refresh · **S** settings · **Q** quit outside search editing. The minimum interactive window size is 48 columns by 16 rows.
 
 For scripts:
 
 ```sh
 bree status --json
+bree list --search Safari --sort name --json
 bree watch --json --count 3
 ```
 
-JSON includes `schema_version: 1` and data validity fields. Unknown values are `null`. Results go to stdout; diagnostics go to stderr. Command options, rule scopes, and local data behavior are covered in the [user guide](docs/cli.md), currently in Chinese.
+JSON includes `schema_version: 1` and data validity fields. For `list`, `groups` reflects search, sorting, and `--limit`, while `processes`, `coverage`, and `policy` retain the full sample. The `view` metadata reports `search`, `sort`, `total_groups`, `matched_groups`, and `shown_groups`. Unknown values are `null`. Results go to stdout; diagnostics go to stderr. Command options, rule scopes, and local data behavior are covered in the [user guide](docs/cli.md), currently in Chinese.
 
 ## Feedback and contributions
 

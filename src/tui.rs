@@ -34,6 +34,9 @@ use crate::policy::{
     AppScope, CleanupPlan, Disposition, PlanEntry, PolicyContext, PolicyState, RuleAction,
     RuleChange, evaluate, scope_for_group,
 };
+use crate::query::{
+    GroupSort as Sort, MAX_SEARCH_CHARS, compare_groups, group_matches, validate_search,
+};
 use crate::storage::Store;
 
 const ACCENT: Color = Color::Rgb(190, 86, 24);
@@ -221,10 +224,10 @@ impl Filter {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Sort {
-    Memory,
-    Name,
+struct SearchEditor {
+    draft: String,
+    original_selection: Option<String>,
+    error: Option<String>,
 }
 
 enum InputResult {
@@ -242,6 +245,8 @@ struct App {
     table: TableState,
     filter: Filter,
     sort: Sort,
+    query: String,
+    search_editor: Option<SearchEditor>,
     selected_group: Option<String>,
     detail_scroll: u16,
     notice: Option<String>,
@@ -279,6 +284,8 @@ impl App {
             table: TableState::default(),
             filter: Filter::All,
             sort: Sort::Memory,
+            query: String::new(),
+            search_editor: None,
             selected_group: None,
             detail_scroll: 0,
             notice: None,
@@ -709,36 +716,82 @@ impl App {
     }
 
     fn groups(&self) -> Vec<&OccupancyGroup> {
-        let mut groups: Vec<_> = self
-            .snapshot
-            .as_ref()
-            .into_iter()
-            .flat_map(|snapshot| &snapshot.groups)
-            .filter(|group| match self.filter {
-                Filter::Pending => self
-                    .entry(&group.id)
-                    .is_some_and(|entry| entry.disposition == Disposition::Pending),
-                Filter::Ai => self.group_has_development_label(group),
-                _ => self.filter.accepts(group.category),
-            })
+        let Some(snapshot) = &self.snapshot else {
+            return Vec::new();
+        };
+        let mut groups: Vec<_> = snapshot
+            .groups
+            .iter()
+            .filter(|group| self.group_in_filter(group))
+            .filter(|group| group_matches(snapshot, group, &self.query))
             .collect();
-        groups.sort_by(|left, right| match self.sort {
-            // Separate metric kinds before comparing amounts. Missing values stay last.
-            Sort::Memory => left
-                .memory_bytes
-                .value
-                .is_none()
-                .cmp(&right.memory_bytes.value.is_none())
-                .then_with(|| left.metric_kind.cmp(&right.metric_kind))
-                .then_with(|| right.memory_bytes.value.cmp(&left.memory_bytes.value))
-                .then_with(|| left.name.cmp(&right.name))
-                .then_with(|| left.id.cmp(&right.id)),
-            Sort::Name => left
-                .name
-                .cmp(&right.name)
-                .then_with(|| left.id.cmp(&right.id)),
-        });
+        groups.sort_by(|left, right| compare_groups(left, right, self.sort));
         groups
+    }
+
+    fn group_in_filter(&self, group: &OccupancyGroup) -> bool {
+        match self.filter {
+            Filter::Pending => self
+                .entry(&group.id)
+                .is_some_and(|entry| entry.disposition == Disposition::Pending),
+            Filter::Ai => self.group_has_development_label(group),
+            _ => self.filter.accepts(group.category),
+        }
+    }
+
+    fn begin_search(&mut self) {
+        self.search_editor = Some(SearchEditor {
+            draft: self.query.clone(),
+            original_selection: self.selected_group.clone(),
+            error: None,
+        });
+    }
+
+    fn edit_search(&mut self, key: KeyEvent) {
+        if key.code == KeyCode::Esc {
+            if let Some(editor) = self.search_editor.take() {
+                self.selected_group = editor.original_selection;
+                self.reconcile_selection();
+            }
+            return;
+        }
+        let Some(editor) = &mut self.search_editor else {
+            return;
+        };
+        match key.code {
+            KeyCode::Enter => match validate_search(&editor.draft) {
+                Ok(query) => {
+                    self.query = query;
+                    self.search_editor = None;
+                    self.reconcile_selection();
+                }
+                Err(error) => editor.error = Some(error),
+            },
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                editor.draft.clear();
+                editor.error = None;
+            }
+            KeyCode::Backspace => {
+                editor.draft.pop();
+                editor.error = None;
+            }
+            KeyCode::Char(value)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                let mut next = editor.draft.clone();
+                next.push(value);
+                match validate_search(&next) {
+                    Ok(_) => {
+                        editor.draft = next;
+                        editor.error = None;
+                    }
+                    Err(error) => editor.error = Some(error),
+                }
+            }
+            _ => {}
+        }
     }
 
     fn reconcile_selection(&mut self) {
@@ -838,6 +891,11 @@ impl App {
             }
             return InputResult::Quit(true);
         }
+        // Editor text must be handled before application shortcuts such as Q, R or S.
+        if self.search_editor.is_some() {
+            self.edit_search(key);
+            return InputResult::Continue;
+        }
         if key.code == KeyCode::Char('q') || key.code == KeyCode::Char('Q') {
             self.cancel_cleanup();
             return InputResult::Quit(false);
@@ -913,6 +971,10 @@ impl App {
                     self.page = Page::Resources;
                     self.detail_scroll = 0;
                 }
+                Page::Resources if !self.query.is_empty() => {
+                    self.query.clear();
+                    self.reconcile_selection();
+                }
                 Page::Resources => self.page = Page::Home,
                 Page::Settings
                 | Page::Preview
@@ -954,6 +1016,7 @@ impl App {
                     self.menu.select(Some(index));
                 }
                 Page::Resources => match key.code {
+                    KeyCode::Char('/') => self.begin_search(),
                     KeyCode::Char('p' | 'P') => self.open_preview(),
                     KeyCode::Up | KeyCode::Char('k') => self.move_row(false),
                     KeyCode::Down | KeyCode::Char('j') => self.move_row(true),
@@ -2116,12 +2179,33 @@ fn summary(app: &App, compact: bool) -> Text<'static> {
     Text::from(lines)
 }
 
+fn search_tail(value: &str, width: u16) -> String {
+    if Line::from(value).width() <= width as usize {
+        return value.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let mut start = value.len();
+    let mut used = 1;
+    for (index, value) in value.char_indices().rev() {
+        let next = Line::from(value.to_string()).width();
+        if used + next > width as usize {
+            break;
+        }
+        used += next;
+        start = index;
+    }
+    format!("…{}", &value[start..])
+}
+
 fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let compact = area.width < 76;
     let wide = area.width >= 118;
     let chunks = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(2),
+        Constraint::Length(1),
         Constraint::Length(2),
         Constraint::Min(4),
         Constraint::Length(3),
@@ -2149,23 +2233,53 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         "Analyzing… Reading real process memory".into()
     };
     frame.render_widget(Paragraph::new(status).wrap(Wrap { trim: false }), chunks[1]);
+    let search = if let Some(editor) = &app.search_editor {
+        Line::styled(
+            format!(
+                "Search: {}▏",
+                search_tail(&editor.draft, area.width.saturating_sub(9))
+            ),
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )
+    } else if app.query.is_empty() {
+        Line::styled(
+            "/ Search names, Bundle ID or exact PID",
+            Style::default().add_modifier(Modifier::DIM),
+        )
+    } else {
+        Line::from(format!(
+            "Search: {}",
+            search_tail(&app.query, area.width.saturating_sub(8))
+        ))
+    };
+    frame.render_widget(Paragraph::new(search), chunks[2]);
     let tabs = Tabs::new(["All", "Apps", "AI/Dev", "System", "Review"])
         .select(app.filter.index())
         .highlight_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
         .divider(" ")
         .padding("", "");
-    frame.render_widget(tabs, chunks[2]);
+    frame.render_widget(tabs, chunks[3]);
 
     let groups = app.groups();
+    let match_count = groups.len();
+    let filter_count = app.snapshot.as_ref().map_or(0, |snapshot| {
+        snapshot
+            .groups
+            .iter()
+            .filter(|group| app.group_in_filter(group))
+            .count()
+    });
     if groups.is_empty() {
-        let message = if app.filter == Filter::Pending {
+        let message = if app.snapshot.is_none() && app.loading {
+            "Analyzing…"
+        } else if app.snapshot.is_none() && app.error.is_some() {
+            "Read failed. R retries."
+        } else if !app.query.is_empty() {
+            "No matches in this filter.\n/ Edit search · Esc Clear search"
+        } else if app.filter == Filter::Pending {
             "No objects need review in this preview.\nSee All for protected objects and their reasons."
         } else if app.filter == Filter::Ai {
             "No reliable developer tool installation evidence matched this sample.\nUncovered objects remain in All; this does not prove there are no AI tasks."
-        } else if app.loading && app.snapshot.is_none() {
-            "Analyzing…"
-        } else if app.error.is_some() && app.snapshot.is_none() {
-            "Read failed. R retries."
         } else {
             "No objects in this filter."
         };
@@ -2173,7 +2287,7 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             Paragraph::new(message)
                 .wrap(Wrap { trim: false })
                 .style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)),
-            chunks[3],
+            chunks[4],
         );
     } else {
         let rows: Vec<_> = groups
@@ -2242,28 +2356,60 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             .header(Row::new(header).style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)))
             .row_highlight_style(selection_style())
             .highlight_symbol(selection_marker());
-        frame.render_stateful_widget(table, chunks[3], &mut app.table);
+        frame.render_stateful_widget(table, chunks[4], &mut app.table);
     }
-    let footer = format!(
-        "↑↓ Select  Enter Details  Tab Filter\nO Sort R Refresh S Settings Esc Home Q Quit\n{} · {:.1}s refresh · {}",
-        if app.sort == Sort::Memory {
-            "Memory"
-        } else {
-            "Name"
-        },
-        app.refresh_interval.as_secs_f64(),
-        app.selected_group
+    if let Some(editor) = &app.search_editor {
+        let note = editor.error.clone().unwrap_or_else(|| {
+            format!(
+                "{} / {MAX_SEARCH_CHARS} characters · Enter applies",
+                editor.draft.chars().count()
+            )
+        });
+        frame.render_widget(
+            Paragraph::new(format!(
+                "Enter Apply  Esc Cancel  Ctrl+U Clear\nBackspace Delete  Ctrl+C Quit\n{note}"
+            ))
+            .style(Style::default().add_modifier(Modifier::DIM)),
+            chunks[5],
+        );
+        return;
+    }
+    let esc = if app.query.is_empty() {
+        "Esc Home"
+    } else {
+        "Esc Clear"
+    };
+    let sort = if app.sort == Sort::Memory {
+        "Memory"
+    } else {
+        "Name"
+    };
+    let note = if app.query.is_empty() {
+        let explanation = app
+            .selected_group
             .as_ref()
             .and_then(|id| app.entry(id))
             .and_then(|entry| entry.reasons.first())
             .map(|reason| format!("Reason: {}", safe_text(reason)))
             .unwrap_or_else(|| {
                 "Group sum; different metrics stay separate. This is not recoverable memory.".into()
-            })
+            });
+        format!(
+            "{sort} · {:.1}s refresh · {explanation}",
+            app.refresh_interval.as_secs_f64()
+        )
+    } else {
+        format!(
+            "{match_count}/{filter_count} matching in filter · {sort} · {:.1}s",
+            app.refresh_interval.as_secs_f64()
+        )
+    };
+    let footer = format!(
+        "↑↓ Select  Enter Details  Tab Filter\nO Sort R Refresh S Settings {esc} Q Quit\n{note}",
     );
     frame.render_widget(
         Paragraph::new(footer).style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)),
-        chunks[4],
+        chunks[5],
     );
 }
 
@@ -2994,6 +3140,222 @@ mod tests {
         let (text, _) = screen(&mut app, 48, 16);
         assert!(text.contains("Enter Save rule"));
         assert!(text.contains("Esc Cancel"));
+    }
+
+    fn input(app: &mut App, value: &str) {
+        for value in value.chars() {
+            assert!(matches!(
+                app.handle(key(KeyCode::Char(value))),
+                InputResult::Continue
+            ));
+        }
+    }
+
+    #[test]
+    fn search_editor_treats_shortcuts_as_text_and_commits_only_on_enter() {
+        let mut app = App::new(true);
+        app.received(Ok(snapshot()));
+        let selected = app.selected_group.clone();
+        app.handle(key(KeyCode::Char('/')));
+        input(&mut app, "qrsa");
+        assert_eq!(app.page, Page::Resources);
+        assert_eq!(app.query, "");
+        assert_eq!(app.search_editor.as_ref().unwrap().draft, "qrsa");
+        assert_eq!(app.groups().len(), 1);
+        assert_eq!(app.selected_group, selected);
+        assert!(app.cleanup.is_none() && app.confirmation.is_none());
+        app.handle(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        input(&mut app, "  中文应用字  ");
+        app.handle(key(KeyCode::Backspace));
+        app.handle(key(KeyCode::Backspace));
+        app.handle(key(KeyCode::Backspace));
+        assert_eq!(app.search_editor.as_ref().unwrap().draft, "  中文应用");
+        app.handle(key(KeyCode::Enter));
+        assert_eq!(app.query, "中文应用");
+        assert!(app.search_editor.is_none());
+        assert_eq!(app.groups().len(), 1);
+        assert_eq!(app.selected_group, selected);
+        app.handle(key(KeyCode::Char('/')));
+        assert!(matches!(
+            app.handle(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            InputResult::Quit(true)
+        ));
+    }
+
+    #[test]
+    fn search_cancel_restores_the_original_exact_selection_after_refresh() {
+        let mut app = App::new(true);
+        let mut original = snapshot();
+        let mut other = original.groups[0].clone();
+        other.id = "other".into();
+        other.name = "Other application".into();
+        original.groups.push(other.clone());
+        app.received(Ok(original.clone()));
+        app.selected_group = Some("group".into());
+        app.reconcile_selection();
+        app.handle(key(KeyCode::Char('/')));
+        input(&mut app, "uncommitted");
+        let mut temporarily_missing = original.clone();
+        temporarily_missing.groups = vec![other];
+        app.received(Ok(temporarily_missing.clone()));
+        assert_eq!(app.selected_group.as_deref(), Some("other"));
+        app.received(Ok(original));
+        assert_eq!(app.selected_group.as_deref(), Some("other"));
+        app.handle(key(KeyCode::Esc));
+        assert_eq!(app.query, "");
+        assert_eq!(app.selected_group.as_deref(), Some("group"));
+        app.query = "Other".into();
+        app.reconcile_selection();
+        app.handle(key(KeyCode::Char('/')));
+        app.handle(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        input(&mut app, "new draft");
+        app.received(Ok(temporarily_missing));
+        app.handle(key(KeyCode::Esc));
+        assert_eq!(app.query, "Other");
+        assert_eq!(app.selected_group.as_deref(), Some("other"));
+    }
+
+    #[test]
+    fn applied_search_composes_with_sort_filter_refresh_and_escape_clear() {
+        let mut app = App::new(true);
+        let mut original = snapshot();
+        let mut other = original.groups[0].clone();
+        other.id = "other".into();
+        other.name = "Unmatched".into();
+        other.category = Category::System;
+        other.process_ids.clear();
+        original.groups.push(other);
+        app.received(Ok(original.clone()));
+        app.handle(key(KeyCode::Char('/')));
+        input(&mut app, "中文");
+        app.handle(key(KeyCode::Enter));
+        let selected = app.selected_group.clone();
+        app.handle(key(KeyCode::Char('o')));
+        assert_eq!(app.sort, Sort::Name);
+        app.handle(key(KeyCode::Tab));
+        assert_eq!(app.filter, Filter::Application);
+        assert_eq!(app.query, "中文");
+        app.received(Ok(original));
+        assert_eq!(app.query, "中文");
+        assert_eq!(app.selected_group, selected);
+        assert_eq!(app.groups().len(), 1);
+        app.set_filter(Filter::System);
+        assert!(app.groups().is_empty());
+        assert!(app.selected_group.is_none());
+        let (text, _) = screen(&mut app, 48, 16);
+        for label in [
+            "Search: 中文",
+            "No matches in this filter",
+            "Esc Clear",
+            "Q Quit",
+        ] {
+            assert!(text.contains(label), "missing {label}: {text}");
+        }
+        app.handle(key(KeyCode::Esc));
+        assert_eq!(app.page, Page::Resources);
+        assert_eq!(app.query, "");
+        assert_eq!(app.groups().len(), 1);
+        app.handle(key(KeyCode::Esc));
+        assert_eq!(app.page, Page::Home);
+    }
+
+    #[test]
+    fn narrow_search_editor_shows_the_unicode_tail_limit_and_validation_errors() {
+        let mut app = App::new(true);
+        app.received(Ok(snapshot()));
+        app.handle(key(KeyCode::Char('/')));
+        input(&mut app, &"中".repeat(MAX_SEARCH_CHARS));
+        input(&mut app, "文");
+        assert_eq!(
+            app.search_editor.as_ref().unwrap().draft.chars().count(),
+            MAX_SEARCH_CHARS
+        );
+        let (text, _) = screen(&mut app, 48, 16);
+        for label in [
+            "Search: …",
+            "▏",
+            "128 characters",
+            "Enter Apply",
+            "Esc Cancel",
+            "Ctrl+U Clear",
+            "Ctrl+C Quit",
+        ] {
+            assert!(text.contains(label), "missing {label}: {text}");
+        }
+        app.handle(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        input(&mut app, "\u{202e}");
+        assert_eq!(app.search_editor.as_ref().unwrap().draft, "");
+        assert!(
+            app.search_editor
+                .as_ref()
+                .unwrap()
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("bidirectional")
+        );
+        app.handle(key(KeyCode::Esc));
+        assert_eq!(app.query, "");
+        let (text, _) = screen(&mut app, 48, 16);
+        for label in [
+            "/ Search",
+            "Enter Details",
+            "Tab Filter",
+            "O Sort",
+            "R Refresh",
+            "S Settings",
+            "Q Quit",
+        ] {
+            assert!(text.contains(label), "missing {label}: {text}");
+        }
+    }
+
+    #[test]
+    fn search_details_return_and_clear_preserve_the_selected_exact_group() {
+        let mut app = App::new(true);
+        app.received(Ok(snapshot()));
+        app.handle(key(KeyCode::Char('/')));
+        input(&mut app, "中文");
+        app.handle(key(KeyCode::Enter));
+        let selected = app.selected_group.clone();
+        app.handle(key(KeyCode::Enter));
+        assert_eq!(app.page, Page::Detail("group".into()));
+        app.handle(key(KeyCode::Esc));
+        assert_eq!(app.page, Page::Resources);
+        assert_eq!(app.query, "中文");
+        assert_eq!(app.selected_group, selected);
+        let (text, _) = screen(&mut app, 48, 16);
+        assert!(text.contains("1/1 matching in filter"), "{text}");
+        app.handle(key(KeyCode::Esc));
+        assert_eq!(app.page, Page::Resources);
+        assert!(app.query.is_empty());
+        assert_eq!(app.selected_group, selected);
+    }
+
+    #[test]
+    fn cancelling_search_after_pid_reuse_never_restores_the_original_instance_id() {
+        let mut app = App::new(true);
+        let original = snapshot();
+        let old_process_id = original.processes[0].id.clone();
+        app.received(Ok(original.clone()));
+        app.handle(key(KeyCode::Char('/')));
+        input(&mut app, "uncommitted draft");
+        let mut replacement = original;
+        replacement.processes[0].identity.start_seconds = Some(11);
+        replacement.processes[0].id = replacement.processes[0].identity.object_id();
+        replacement.groups[0].id = format!("app:{}", replacement.processes[0].id);
+        replacement.groups[0].process_ids = vec![replacement.processes[0].id.clone()];
+        let new_group_id = replacement.groups[0].id.clone();
+        app.received(Ok(replacement));
+        app.handle(key(KeyCode::Esc));
+        assert_eq!(app.query, "");
+        assert_eq!(app.selected_group.as_ref(), Some(&new_group_id));
+        assert_ne!(app.selected_group.as_deref(), Some("group"));
+        assert_ne!(
+            app.snapshot.as_ref().unwrap().processes[0].id,
+            old_process_id
+        );
+        assert!(app.cleanup.is_none() && app.confirmation.is_none());
     }
 
     #[test]

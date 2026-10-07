@@ -126,7 +126,7 @@ def check_colors(data):
                 index += 1
 
 
-def session(colorfgbg, columns, rows):
+def session(colorfgbg, columns, rows, cancel_in_editor=False):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
     before = termios.tcgetattr(slave)
@@ -141,9 +141,16 @@ def session(colorfgbg, columns, rows):
         child = subprocess.Popen([str(binary)], stdin=slave, stdout=slave, stderr=slave, env=env)
         # These keys only inspect pages. They never confirm a rule or request application quit.
         stages = [("Memory pressure:", b"s"), ("Settings · Allow / Protect", b"\x1b"),
-                  ("Memory pressure:", b"3\r"), ("bree Memory", b"\x1b"),
+                  ("Memory pressure:", b"3\r"), ("bree Memory", b"/"),
+                  ("Enter Apply", b"qrsa"), ("Search: qrsa", b"\x15bree-private-pty-no-match\r"),
+                  ("No matches in this filter.", b"/"), ("Enter Apply", b"\x15draft\x1b"),
+                  ("Search: bree-private-pty-no-match", b"\x1b"), ("/ Search names", b"\x1b"),
                   ("Memory pressure:", b"p"), ("Preview · No quit requests", b"\x1b"),
                   ("Memory pressure:", b"4\r"), ("History · Recent runs", b"q")]
+        if cancel_in_editor:
+            stages = [("Memory pressure:", b"3\r"), ("bree Memory", b"/"),
+                      ("Enter Apply", b"\x03")]
+        expected_exit = 130 if cancel_in_editor else 0
         current = 0
         updated = time.monotonic()
         pending_action = False
@@ -167,14 +174,15 @@ def session(colorfgbg, columns, rows):
                             raise RuntimeError("removed mascot or subtitle remains")
                     else:
                         # Both narrow and wide pages must keep the exit key visible.
-                        if "Q Quit" not in screen.text():
+                        exit_key = "Ctrl+C Quit" if "Enter Apply" in screen.text() else "Q Quit"
+                        if exit_key not in screen.text():
                             raise RuntimeError(f"page exit key clipped: stage {current}\n{screen.text()}")
                     os.write(master, stages[current][1])
                     current += 1
                     pending_action = False
             if child.poll() is None:
                 raise RuntimeError(f"Bree theme check timed out at stage {current}\n{screen.text()}")
-            if current != len(stages) or child.returncode != 0:
+            if current != len(stages) or child.returncode != expected_exit:
                 raise RuntimeError(f"missing screen or unexpected exit: stage={current}, code={child.returncode}")
             after = termios.tcgetattr(slave)
             after[3] &= ~termios.PENDIN
@@ -186,13 +194,19 @@ def session(colorfgbg, columns, rows):
             expanded = columns >= 80 and rows >= 24
             if expanded != any("█▄▄▄" in line for line in home):
                 raise RuntimeError("wordmark did not adapt to available space")
-            return {"colorfgbg": colorfgbg, "columns": columns, "rows": rows,
+            result = {"colorfgbg": colorfgbg, "columns": columns, "rows": rows,
                     "brand": "wordmark" if expanded else "compact",
                     "default_background_and_text": True, "no_reverse_video": True,
-                    "pages_opened": ["Home", "Settings", "Memory", "Preview", "History"],
+                    "pages_opened": ["Home", "Memory"] if cancel_in_editor else ["Home", "Settings", "Memory", "Preview", "History"],
                     "critical_entries_visible": True, "home_lines": home,
                     "exit_code": child.returncode, "terminal_restored": True,
                     "mutable_file_flags_restored": True}
+            if cancel_in_editor:
+                result["ctrl_c_in_search_editor"] = True
+            else:
+                result["search_edit_submit_cancel_clear"] = True
+                result["shortcut_letters_are_search_text"] = True
+            return result
         finally:
             if child.poll() is None:
                 # Only this script's Bree child; a timeout is always a failed check.
@@ -211,6 +225,7 @@ def session(colorfgbg, columns, rows):
 report = {"cases": [session(theme, width, height)
                     for theme in ("0;15", "15;0")
                     for width, height in ((100, 28), (140, 40), (48, 16))],
+          "editor_ctrl_c": session("15;0", 48, 16, cancel_in_editor=True),
           "limits": ["COLORFGBG represents test inputs; a PTY has no visual theme",
                      "checks emitted colors, rendered cell text, navigation and modes; not physical font rendering",
                      "popup cell colors are covered by Ratatui buffer unit tests"]}

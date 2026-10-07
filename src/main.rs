@@ -7,6 +7,7 @@ use bree_cli::{
     output,
     policy::{CleanupPlan, Disposition, PolicyContext, PolicyState, evaluate},
     preview,
+    query::{GroupSort, compare_groups, group_matches, validate_search},
     storage::Store,
     tui,
 };
@@ -47,6 +48,12 @@ enum Command {
         /// Limit displayed groups; JSON retains the full process table and coverage
         #[arg(long, value_parser = clap::value_parser!(usize))]
         limit: Option<usize>,
+        /// Match names or bundle IDs without case sensitivity; pure digits match an exact PID
+        #[arg(long, default_value = "", value_parser = validate_search)]
+        search: String,
+        /// Order displayed groups; unavailable memory stays after measured values
+        #[arg(long, value_enum, default_value = "memory")]
+        sort: GroupSort,
     },
     /// Inspect an object ID from list using a fresh sample of the current instance
     Inspect {
@@ -309,18 +316,37 @@ fn execute(
             output::status_text(&snapshot),
             policy_summary(&observation)
         )),
-        Command::List { json: true, limit } => {
-            let mut exported = snapshot_json(&snapshot, &observation);
-            if let Some(limit) = limit {
-                exported["groups"]
-                    .as_array_mut()
-                    .expect("snapshot groups")
-                    .truncate(limit);
+        Command::List {
+            json,
+            limit,
+            search,
+            sort,
+        } => {
+            // This display view keeps the complete process sample and evaluated plan.
+            // Filtering cannot change ownership, policy counts or cleanup candidates.
+            let mut display = snapshot.clone();
+            display.groups.retain(|group| group_matches(&snapshot, group, &search));
+            display.groups.sort_by(|a, b| compare_groups(a, b, sort));
+            let matched = display.groups.len();
+            let shown = limit.unwrap_or(matched).min(matched);
+            if json {
+                display.groups.truncate(shown);
+                let mut exported = snapshot_json(&display, &observation);
+                exported["view"] = json!({
+                    "search":search,"sort":sort,"total_groups":snapshot.groups.len(),
+                    "matched_groups":matched,"shown_groups":shown
+                });
+                output::write_json(&exported)
+            } else {
+                output::write_text(&format!(
+                    "View: {shown}/{matched} matching groups · {} total · Sort: {} · Search: {}\n{}{}",
+                    snapshot.groups.len(),
+                    match sort { GroupSort::Memory => "memory", GroupSort::Name => "name" },
+                    if search.is_empty() { "(all)".into() } else { format!("{search:?}") },
+                    classified_list_text(&display, limit, &observation),
+                    if matched == 0 { "No matching groups in this sample. Try another name, bundle ID or exact PID.\n" } else { "" }
+                ))
             }
-            output::write_json(&exported)
-        }
-        Command::List { json: false, limit } => {
-            output::write_text(&classified_list_text(&snapshot, limit, &observation))
         }
         Command::Inspect { id, json } => {
             let exported = output::export_snapshot(&snapshot, true);
