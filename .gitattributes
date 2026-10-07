@@ -1,0 +1,2 @@
+# Preserve upstream license text exactly, including its original whitespace.
+THIRD-PARTY-NOTICES.txt linguist-vendored -whitespace

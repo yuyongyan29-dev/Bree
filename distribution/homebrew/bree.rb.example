@@ -1,0 +1,19 @@
+# Example only; no download endpoint is published by this file.
+# distribution/package.sh generates bree.rb with the current version and digest.
+# Copy that generated file to Casks/bree.rb in the eventual Homebrew tap.
+# Install with: brew install --cask OWNER/TAP/bree
+cask "bree" do
+  version "0.3.0-alpha.1"
+  sha256 "REPLACE_WITH_GENERATED_BINARY_SHA256"
+
+  url "https://downloads.example.com/bree/releases/download/v0.3.0-alpha.1/bree-aarch64-apple-darwin"
+  name "Bree"
+  desc "Local memory inspection for macOS"
+  homepage "https://github.com/yuyongyan29-dev/Bree"
+
+  depends_on arch: :arm64
+  depends_on :macos
+  container type: :naked
+
+  binary "bree-aarch64-apple-darwin", target: "bree"
+end

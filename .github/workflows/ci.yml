@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cli:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install locked Rust toolchain
+        run: rustup show
+      - name: Format and lint
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+      - name: Rust behavior tests
+        run: cargo test --locked
+      - name: Installer tests
+        run: |
+          sh -n distribution/install.sh distribution/package.sh
+          python3 distribution/tests/test_install.py
+      - name: Release build
+        run: cargo build --locked --release

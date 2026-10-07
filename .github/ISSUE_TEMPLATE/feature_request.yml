@@ -1,0 +1,14 @@
+name: Feature request
+description: 描述你想用 Bree 解决的具体问题
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 当前遇到的问题
+      description: 在什么场景发生，目前怎样处理？
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 希望的行为
