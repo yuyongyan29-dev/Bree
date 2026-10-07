@@ -1,19 +1,25 @@
 # Example only; no download endpoint is published by this file.
 # distribution/package.sh generates bree.rb with the current version and digest.
-# Copy that generated file to Casks/bree.rb in the eventual Homebrew tap.
-# Install with: brew install --cask OWNER/TAP/bree
-cask "bree" do
-  version "0.3.0-alpha.1"
-  sha256 "REPLACE_WITH_GENERATED_BINARY_SHA256"
-
-  url "https://downloads.example.com/bree/releases/download/v0.3.0-alpha.1/bree-aarch64-apple-darwin"
-  name "Bree"
+# Add the brew bottle output before publishing Formula/bree.rb in the tap.
+# Install with: brew install OWNER/TAP/bree
+class Bree < Formula
   desc "Local memory inspection for macOS"
   homepage "https://github.com/yuyongyan29-dev/Bree"
+  url "https://downloads.example.com/bree/releases/download/v0.3.0-alpha.1/bree-aarch64-apple-darwin", using: :nounzip
+  version "0.3.0-alpha.1"
+  sha256 "REPLACE_WITH_GENERATED_BINARY_SHA256"
+  license "GPL-3.0-only"
 
   depends_on arch: :arm64
-  depends_on :macos
-  container type: :naked
+  depends_on macos: :golden_gate
 
-  binary "bree-aarch64-apple-darwin", target: "bree"
+  def install
+    bin.install "bree-aarch64-apple-darwin" => "bree"
+    chmod 0755, bin/"bree"
+  end
+
+  test do
+    assert_equal "bree #{version}", shell_output("#{bin}/bree --version").strip
+    assert_match '"schema_version":1', shell_output("#{bin}/bree license --json")
+  end
 end

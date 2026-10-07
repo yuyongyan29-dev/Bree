@@ -9,6 +9,7 @@ Bree 免费提供，提供 Homebrew 和 curl 两个安装入口。两者使用�
 | 程序版本 | `0.3.0-alpha.1` |
 | 架构 | 原生 Apple Silicon（arm64） |
 | 已验证系统 | macOS 27.0.1 |
+| Homebrew bottle | Apple Silicon、macOS 27 |
 | 其他 macOS 版本 | 尚待验证，不列为已支持组合 |
 | Intel、Linux、Windows | 暂不提供安装包 |
 
@@ -21,26 +22,28 @@ Bree 免费提供，提供 Homebrew 和 curl 两个安装入口。两者使用�
 先安装并按提示配置 [Homebrew](https://brew.sh/)，然后执行：
 
 ```sh
-brew install --cask yuyongyan29-dev/tap/bree
+brew install yuyongyan29-dev/tap/bree
 bree --version
 bree
 ```
 
-完整的 tap 名称会自动选择 [Bree 的安装定义](https://github.com/yuyongyan29-dev/homebrew-tap)，无需另外手动添加 tap。定义固定版本 URL 和 SHA-256，下载预编译程序并安装 `bree` 命令。
+完整的 tap 名称会自动选择 [Bree 的安装定义](https://github.com/yuyongyan29-dev/homebrew-tap)，无需另外手动添加 tap。Formula 固定版本 URL 和 SHA-256，默认下载匹配系统的预编译 bottle 并安装 `bree` 命令。
 
-Apple Silicon 安装预编译 cask 无需 Xcode 或命令行开发工具。Homebrew 自身当前官方支持 macOS 15 及以上；这不代表 Bree 已在所有这些版本验证，系统要求以 [Homebrew 官方安装说明](https://docs.brew.sh/Installation) 为准。
+匹配 bottle 的标准安装无需 Xcode 命令行工具，也无需 Rust。当前 tap 仅提供 macOS 27 arm64 bottle，并限制最低系统为 macOS 27；其他版本尚未完成发行验证。Homebrew 自身的系统要求见 [官方安装说明](https://docs.brew.sh/Installation)。
+
+此前短暂提供的 cask 已撤下：未公证程序带 quarantine 安装后会被 Gatekeeper 阻挡。若你装过旧 cask，先执行 `brew uninstall --cask bree`，再使用上面的 Formula 安装命令。安装脚本不修改系统安全设置。
 
 升级：
 
 ```sh
 brew update
-brew upgrade --cask yuyongyan29-dev/tap/bree
+brew upgrade yuyongyan29-dev/tap/bree
 ```
 
 卸载：
 
 ```sh
-brew uninstall --cask bree
+brew uninstall bree
 ```
 
 ## curl 安装
