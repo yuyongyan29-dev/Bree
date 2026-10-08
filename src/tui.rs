@@ -292,7 +292,12 @@ impl App {
             sort: Sort::Memory,
             query: String::new(),
             search_editor: None,
-            color_depth: ColorDepth::from_environment(),
+            // Tests must not inherit the developer's terminal; color tests set it explicitly.
+            color_depth: if cfg!(test) {
+                ColorDepth::None
+            } else {
+                ColorDepth::from_environment()
+            },
             selected_group: None,
             detail_scroll: 0,
             notice: None,
@@ -2682,8 +2687,8 @@ fn render_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
 mod tests {
     use super::*;
     use crate::model::{
-        Application, Attribution, Coverage, Metric, Pressure, ProcessIdentity, SystemMemory,
-        Validity,
+        ActivationPolicy, Application, Attribution, Coverage, Metric, Pressure, ProcessIdentity,
+        SystemMemory, Validity,
     };
     use ratatui::backend::TestBackend;
 
@@ -2814,6 +2819,7 @@ mod tests {
                 name: "中文应用".into(),
                 leader_pid: process.identity.pid,
                 frontmost: false,
+                activation_policy: ActivationPolicy::Regular,
             }),
             method: "appkit_main_application".into(),
             confidence: "high".into(),

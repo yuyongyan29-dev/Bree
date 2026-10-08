@@ -97,6 +97,17 @@ pub enum Category {
     Unknown,
 }
 
+/// AppKit activation policy as read from the running application.
+/// Only `Regular` (an ordinary Dock app) can lead an application group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivationPolicy {
+    Regular,
+    Accessory,
+    Prohibited,
+    Unknown,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Application {
     pub bundle_id: Option<String>,
@@ -104,6 +115,7 @@ pub struct Application {
     pub name: String,
     pub leader_pid: u32,
     pub frontmost: bool,
+    pub activation_policy: ActivationPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

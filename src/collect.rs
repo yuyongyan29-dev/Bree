@@ -69,16 +69,7 @@ impl Collector {
             ));
         }
         let (raw_processes, mut diagnostics) = self.platform.processes()?;
-        let apps: Vec<_> = self
-            .platform
-            .applications()
-            .into_iter()
-            .filter(|app| {
-                raw_processes
-                    .iter()
-                    .any(|p| p.identity == app.leader_identity)
-            })
-            .collect();
+        let apps = main_applications(self.platform.applications(), &raw_processes);
         let ancestors = hosting_ancestors(&raw_processes, std::process::id());
         let hosting_bundles: HashSet<String> = raw_processes
             .iter()
@@ -231,6 +222,18 @@ fn cpu_between(previous: Option<(u64, Instant)>, total_ns: u64, now: Instant) ->
         return Metric::unavailable(Validity::Unknown, CPU_SOURCE, "Sampling interval is zero");
     }
     Metric::ok(delta_cpu as f64 / elapsed_ns as f64 * 100.0, CPU_SOURCE)
+}
+
+/// Only ordinary (Regular activation policy) apps in the current sample lead a group.
+/// Accessory/background apps and nested helper bundles that AppKit also lists
+/// stay out, so their processes resolve to the enclosing main app's installation.
+fn main_applications(apps: Vec<AppEvidence>, processes: &[RawProcess]) -> Vec<AppEvidence> {
+    apps.into_iter()
+        .filter(|app| {
+            app.app.activation_policy == ActivationPolicy::Regular
+                && processes.iter().any(|p| p.identity == app.leader_identity)
+        })
+        .collect()
 }
 
 fn hosting_ancestors(processes: &[RawProcess], own_pid: u32) -> HashSet<u32> {
@@ -434,11 +437,17 @@ mod tests {
                 name: "Test".into(),
                 leader_pid: pid,
                 frontmost: false,
+                activation_policy: ActivationPolicy::Regular,
             },
             executable_path: format!("{bundle}/Contents/MacOS/Test"),
             leader_uid: 501,
             leader_identity: raw(pid, None).identity,
         }
+    }
+    fn accessory(pid: u32, bundle: &str) -> AppEvidence {
+        let mut evidence = app(pid, bundle);
+        evidence.app.activation_policy = ActivationPolicy::Accessory;
+        evidence
     }
     fn info(raw: RawProcess, attribution: Attribution) -> ProcessInfo {
         ProcessInfo {
@@ -483,6 +492,51 @@ mod tests {
         let mut other_user = raw(7, Some("/Applications/Test.app/Contents/Helper"));
         other_user.uid = Some(502);
         assert!(attribute(&other_user, &apps).application.is_none());
+    }
+    #[test]
+    fn nested_helper_app_joins_its_regular_main_app_instead_of_leading_a_group() {
+        let outer = "/Applications/Outer.app";
+        let inner = "/Applications/Outer.app/Contents/Frameworks/Outer Helper.app";
+        let processes = vec![
+            raw(1, Some("/Applications/Outer.app/Contents/MacOS/Test")),
+            // AppKit also lists the nested helper as a running application.
+            raw(2, Some(&format!("{inner}/Contents/MacOS/Test"))),
+            raw(3, Some(&format!("{inner}/Contents/MacOS/Outer Helper"))),
+            // A standalone menu bar app has no regular main app to join.
+            raw(4, Some("/Applications/Menu.app/Contents/MacOS/Test")),
+        ];
+        let listed = vec![
+            app(1, outer),
+            accessory(2, inner),
+            accessory(4, "/Applications/Menu.app"),
+        ];
+        // Unfiltered, the helper bundle competes with its enclosing app.
+        assert!(attribute(&processes[2], &listed).application.is_none());
+
+        let apps = main_applications(listed, &processes);
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].app.leader_pid, 1);
+        let infos: Vec<_> = processes
+            .into_iter()
+            .map(|p| {
+                let attribution = attribute(&p, &apps);
+                info(p, attribution)
+            })
+            .collect();
+        for helper in &infos[1..3] {
+            let application = helper.attribution.application.as_ref().unwrap();
+            assert_eq!(application.leader_pid, 1);
+            assert_eq!(helper.attribution.method, "same_bundle_executable");
+        }
+        assert!(infos[3].attribution.application.is_none());
+        let groups = occupancy_groups(&infos);
+        let main = groups
+            .iter()
+            .find(|g| g.id == format!("app:{}", infos[0].id))
+            .unwrap();
+        assert_eq!(main.process_ids.len(), 3);
+        assert_eq!(main.memory_bytes.value, Some(30));
+        assert_eq!(groups.len(), 2);
     }
     #[test]
     fn ambiguous_same_installation_and_reused_leader_do_not_attribute() {

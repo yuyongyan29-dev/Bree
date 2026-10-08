@@ -4,7 +4,7 @@ use super::{AppEvidence, RawProcess};
 use crate::model::*;
 use libc::{c_char, c_int, c_void};
 use objc2::rc::autoreleasepool;
-use objc2_app_kit::NSWorkspace;
+use objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
 use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSRunLoop};
 use std::ffi::CStr;
 use std::mem::{self, MaybeUninit};
@@ -360,6 +360,16 @@ fn read_applications_on_main_thread() -> Vec<AppEvidence> {
                     .localizedName()
                     .map(|v| safe_text(&v.to_string()))
                     .unwrap_or_else(|| fixed_string(&before.pbi_name));
+                let policy = app.activationPolicy();
+                let activation_policy = if policy == NSApplicationActivationPolicy::Regular {
+                    ActivationPolicy::Regular
+                } else if policy == NSApplicationActivationPolicy::Accessory {
+                    ActivationPolicy::Accessory
+                } else if policy == NSApplicationActivationPolicy::Prohibited {
+                    ActivationPolicy::Prohibited
+                } else {
+                    ActivationPolicy::Unknown
+                };
                 Some(AppEvidence {
                     app: Application {
                         bundle_id: app.bundleIdentifier().map(|v| safe_text(&v.to_string())),
@@ -367,6 +377,7 @@ fn read_applications_on_main_thread() -> Vec<AppEvidence> {
                         name,
                         leader_pid: pid as u32,
                         frontmost: frontmost_pid == Some(pid),
+                        activation_policy,
                     },
                     leader_identity,
                     executable_path: actual_path,

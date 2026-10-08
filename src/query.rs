@@ -93,8 +93,8 @@ pub fn compare_groups(left: &OccupancyGroup, right: &OccupancyGroup, sort: Group
 mod tests {
     use super::*;
     use crate::model::{
-        Application, Attribution, Category, Coverage, Metric, Pressure, ProcessIdentity,
-        ProcessInfo, SCHEMA_VERSION, SystemMemory,
+        ActivationPolicy, Application, Attribution, Category, Coverage, Metric, Pressure,
+        ProcessIdentity, ProcessInfo, SCHEMA_VERSION, SystemMemory,
     };
 
     fn group(id: &str, name: &str, amount: u64) -> OccupancyGroup {
@@ -147,6 +147,7 @@ mod tests {
                         name: "Browser".into(),
                         leader_pid: 12345,
                         frontmost: false,
+                        activation_policy: ActivationPolicy::Regular,
                     }),
                     method: "fixture".into(),
                     confidence: "fixture".into(),
