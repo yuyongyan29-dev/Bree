@@ -26,7 +26,7 @@ pub fn label_process(process: &ProcessInfo) -> Option<DevelopmentLabel> {
             "Codex CLI",
             "Exact Codex CLI executable path inside the main app; installation layout verified locally with a 0.160.1 sample, version not read at runtime",
         )
-    } else if verified_claude_native_installation(executable) {
+    } else if claude_native_version(executable).is_some() {
         (
             "Claude Code",
             "Exact executable path of a native Claude installation in ~/.local/share/claude/versions/<numeric version>; layout verified locally with 2.1.290–2.1.294 samples, version not checked against a verified list",
@@ -43,25 +43,51 @@ pub fn label_process(process: &ProcessInfo) -> Option<DevelopmentLabel> {
     })
 }
 
-fn verified_claude_native_installation(path: &str) -> bool {
+/// A display name for an already verified label, with a version only when the
+/// supported installation layout provides one. Never run the tool to query it.
+pub(crate) fn labeled_process_name(process: &ProcessInfo) -> Option<String> {
+    let label = label_process(process)?;
+    Some(
+        match process
+            .executable_path
+            .as_deref()
+            .and_then(claude_native_version)
+        {
+            Some(version) => format!("{} {version}", label.label),
+            None => label.label,
+        },
+    )
+}
+
+fn claude_native_version(path: &str) -> Option<&str> {
     if path.chars().any(char::is_control)
         || path
             .split('/')
             .skip(1)
             .any(|part| part.is_empty() || part == "." || part == "..")
     {
-        return false;
+        return None;
     }
-    let Ok(relative) = Path::new(path).strip_prefix("/Users") else {
-        return false;
-    };
+    let relative = Path::new(path).strip_prefix("/Users").ok()?;
     let components: Vec<_> = relative.components().collect();
-    matches!(components.as_slice(), [Component::Normal(_), local, share, claude, versions, version]
-        if *local == Component::Normal(".local".as_ref())
-        && *share == Component::Normal("share".as_ref())
-        && *claude == Component::Normal("claude".as_ref())
-        && *versions == Component::Normal("versions".as_ref())
-        && version.as_os_str().to_str().is_some_and(numeric_version))
+    match components.as_slice() {
+        [
+            Component::Normal(_),
+            local,
+            share,
+            claude,
+            versions,
+            version,
+        ] if *local == Component::Normal(".local".as_ref())
+            && *share == Component::Normal("share".as_ref())
+            && *claude == Component::Normal("claude".as_ref())
+            && *versions == Component::Normal("versions".as_ref())
+            && version.as_os_str().to_str().is_some_and(numeric_version) =>
+        {
+            version.as_os_str().to_str()
+        }
+        _ => None,
+    }
 }
 
 /// The native updater names each executable after its release, such as `2.1.294`.
@@ -132,6 +158,26 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    #[test]
+    fn display_names_use_labels_and_only_verified_installation_versions() {
+        for version in ["2.1.294", "3.0.0"] {
+            let path = format!("/Users/test/.local/share/claude/versions/{version}");
+            assert_eq!(
+                labeled_process_name(&process(Some(&path))),
+                Some(format!("Claude Code {version}"))
+            );
+        }
+        assert_eq!(
+            labeled_process_name(&process(Some(CODEX_APP_CLI))).as_deref(),
+            Some("Codex CLI")
+        );
+        assert!(labeled_process_name(&process(Some("/usr/local/bin/2.1.294"))).is_none());
+        assert!(labeled_process_name(&process(None)).is_none());
+        let mut stale = process(Some("/Users/test/.local/share/claude/versions/2.1.294"));
+        stale.identity.status = Validity::Stale;
+        assert!(labeled_process_name(&stale).is_none());
     }
 
     #[test]

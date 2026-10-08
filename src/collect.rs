@@ -278,37 +278,103 @@ fn attribute(process: &RawProcess, apps: &[AppEvidence]) -> Attribution {
     }
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum OccupancyKey {
+    Application(String),
+    Executable(u32, String),
+    Name(u32, String),
+    Instance(String),
+}
+
+impl OccupancyKey {
+    fn id(&self) -> String {
+        match self {
+            Self::Application(anchor) => format!("app:{anchor}"),
+            Self::Executable(uid, path) => unattributed_id("path", *uid, path),
+            Self::Name(uid, name) => unattributed_id("name", *uid, name),
+            Self::Instance(id) => id.clone(),
+        }
+    }
+}
+
+fn unattributed_id(kind: &str, uid: u32, value: &str) -> String {
+    // Fixed FNV-1a-128 keeps IDs repeatable across samples, invocations and Rust
+    // versions without exporting paths. Grouping uses the full key, not a hash.
+    let fingerprint = value
+        .bytes()
+        .fold(0x6c62272e07bb014262b821756295c58d_u128, |hash, byte| {
+            (hash ^ u128::from(byte)).wrapping_mul(0x0000000001000000000000000000013b)
+        });
+    format!("unattributed:{kind}:{uid}:{fingerprint:032x}")
+}
+
 fn occupancy_groups(processes: &[ProcessInfo]) -> Vec<OccupancyGroup> {
-    let mut groups: BTreeMap<String, OccupancyGroup> = BTreeMap::new();
+    let mut groups: BTreeMap<OccupancyKey, (OccupancyGroup, bool)> = BTreeMap::new();
     let mut seen = HashSet::new();
     for process in processes {
         if !seen.insert(process.id.clone()) {
             continue;
         }
-        let (id, name, explanation) = if let Some(app) = &process.attribution.application {
+        let label = process
+            .attribution
+            .application
+            .is_none()
+            .then(|| crate::attribution::labeled_process_name(process))
+            .flatten();
+        let (key, name, explanation) = if let Some(app) = &process.attribution.application {
             let leader = processes.iter().find(|p| p.identity.pid == app.leader_pid);
             let anchor = leader.map(|p| p.id.as_str()).unwrap_or(process.id.as_str());
             (
-                format!("app:{anchor}"),
+                OccupancyKey::Application(anchor.into()),
                 app.name.clone(),
                 "RSS total of the same running main app and processes in its bundle; each instance is counted once, and missing values are not replaced with zero.".into(),
             )
         } else {
+            let (key, explanation) = match (process.uid, process.executable_path.as_deref().filter(|path| !path.is_empty())) {
+                (Some(uid), Some(path)) => (
+                    OccupancyKey::Executable(uid, path.into()),
+                    "Unattributed: grouped by the same executable path and UID, without establishing application ownership. Each instance is counted once; missing RSS makes the total unknown.".into(),
+                ),
+                (Some(uid), None) => (
+                    OccupancyKey::Name(uid, process.name.clone()),
+                    "Unattributed: executable paths are unreadable; grouped only by the same process name and UID, without establishing application ownership or a shared executable. Each instance is counted once; missing RSS makes the total unknown.".into(),
+                ),
+                (None, _) => (
+                    OccupancyKey::Instance(process.id.clone()),
+                    "Unattributed: UID is unreadable; this instance is shown separately because a shared user cannot be established.".into(),
+                ),
+            };
             (
-                process.id.clone(),
-                process.name.clone(),
-                process.attribution.explanation.clone(),
+                key,
+                safe_text(label.as_deref().unwrap_or(&process.name)),
+                explanation,
             )
         };
-        let group = groups.entry(id.clone()).or_insert_with(|| OccupancyGroup {
-            id,
-            name,
-            category: process.category,
-            memory_bytes: process.memory_bytes.clone(),
-            metric_kind: PROCESS_METRIC_KIND.into(),
-            process_ids: Vec::new(),
-            explanation,
+        let id = key.id();
+        let (group, has_label) = groups.entry(key).or_insert_with(|| {
+            (
+                OccupancyGroup {
+                    id,
+                    name: name.clone(),
+                    category: process.category,
+                    memory_bytes: process.memory_bytes.clone(),
+                    metric_kind: PROCESS_METRIC_KIND.into(),
+                    process_ids: Vec::new(),
+                    explanation,
+                },
+                label.is_some(),
+            )
         });
+        // A later member may have a reliable developer label even if the first
+        // member does not. RSS/input order must not determine the display name.
+        if (label.is_some() && !*has_label) || (label.is_some() == *has_label && name < group.name)
+        {
+            group.name = name;
+            *has_label = label.is_some();
+        }
+        if process.attribution.application.is_none() && process.category == Category::System {
+            group.category = Category::System;
+        }
         let first_member = group.process_ids.is_empty();
         group.process_ids.push(process.id.clone());
         if first_member {
@@ -341,7 +407,7 @@ fn occupancy_groups(processes: &[ProcessInfo]) -> Vec<OccupancyGroup> {
             }
         }
     }
-    let mut groups: Vec<_> = groups.into_values().collect();
+    let mut groups: Vec<_> = groups.into_values().map(|(group, _)| group).collect();
     groups.sort_by(|a, b| {
         b.memory_bytes
             .value
@@ -407,6 +473,162 @@ mod tests {
             cpu_one_core_percent: Metric::unavailable(Validity::Unknown, "test", "baseline"),
             category: Category::Application,
             attribution,
+        }
+    }
+
+    fn unattributed(process: RawProcess) -> ProcessInfo {
+        let attribution = attribute(&process, &[]);
+        let category = classify_process(&process, &attribution).0;
+        let mut result = info(process, attribution);
+        result.category = category;
+        result
+    }
+
+    #[test]
+    fn unattributed_same_path_and_uid_merge_distinct_instances_once() {
+        for (path, category) in [
+            ("/opt/example/bin/tool", Category::Unknown),
+            ("/usr/libexec/example", Category::System),
+        ] {
+            let first = unattributed(raw(42, Some(path)));
+            let mut second = unattributed(raw(43, Some(path)));
+            second.name = "different process name".into();
+            let groups = occupancy_groups(&[first.clone(), second.clone(), first.clone()]);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].category, category);
+            assert_eq!(groups[0].memory_bytes.value, Some(20));
+            assert_eq!(groups[0].process_ids, vec![first.id, second.id]);
+            assert!(groups[0].explanation.starts_with("Unattributed:"));
+            assert!(second.attribution.application.is_none());
+            assert_eq!(second.attribution.method, "unattributed");
+        }
+    }
+
+    #[test]
+    fn unreadable_paths_merge_by_name_and_uid_without_joining_known_paths() {
+        let first = unattributed(raw(42, None));
+        let second = unattributed(raw(43, None));
+        let mut other_name = unattributed(raw(44, None));
+        other_name.name = "python".into();
+        let known_path = unattributed(raw(45, Some("/opt/bin/node")));
+        let other_path = unattributed(raw(46, Some("/opt/other/node")));
+        let groups = occupancy_groups(&[
+            first.clone(),
+            second.clone(),
+            other_name,
+            known_path,
+            other_path,
+        ]);
+        assert_eq!(groups.len(), 4);
+        let merged = groups.iter().find(|g| g.process_ids.len() == 2).unwrap();
+        assert_eq!(merged.process_ids, vec![first.id, second.id]);
+        assert_eq!(merged.memory_bytes.value, Some(20));
+        assert!(merged.explanation.contains("paths are unreadable"));
+
+        // Path and name keys must stay distinct even when the strings coincide.
+        let known = unattributed(raw(50, Some("/opt/bin/node")));
+        let mut named = unattributed(raw(51, None));
+        named.name = "/opt/bin/node".into();
+        let groups = occupancy_groups(&[known, named]);
+        assert_eq!(groups.len(), 2);
+        assert_ne!(groups[0].id, groups[1].id);
+    }
+
+    #[test]
+    fn different_or_unreadable_uids_never_merge() {
+        for path in [Some("/opt/bin/node"), None] {
+            let first = unattributed(raw(42, path));
+            let mut other_uid = unattributed(raw(43, path));
+            other_uid.uid = Some(502);
+            let mut unknown_uid = unattributed(raw(44, path));
+            unknown_uid.uid = None;
+            let mut other_unknown_uid = unattributed(raw(45, path));
+            other_unknown_uid.uid = None;
+            let groups = occupancy_groups(&[first, other_uid, unknown_uid, other_unknown_uid]);
+            assert_eq!(groups.len(), 4);
+            assert!(groups.iter().all(|g| g.process_ids.len() == 1));
+            assert_eq!(
+                groups.iter().map(|g| &g.id).collect::<HashSet<_>>().len(),
+                4
+            );
+        }
+    }
+
+    #[test]
+    fn unattributed_group_ids_and_names_survive_reordering_and_member_turnover() {
+        for path in [Some("/Users/example/private/tool"), None] {
+            let first = unattributed(raw(42, path));
+            let mut second = unattributed(raw(43, path));
+            second.memory_bytes = Metric::ok(20, "test");
+            if path.is_some() {
+                second.name = "alternate name".into();
+            }
+            let forward = occupancy_groups(&[first.clone(), second.clone()]);
+            let reverse = occupancy_groups(&[second.clone(), first]);
+            assert_eq!(forward[0].id, reverse[0].id);
+            assert_eq!(forward[0].name, reverse[0].name);
+            assert_eq!(forward[0].id, occupancy_groups(&[second])[0].id);
+
+            let mut replacement = unattributed(raw(90, path));
+            replacement.identity.start_seconds = Some(100);
+            replacement.id = replacement.identity.object_id();
+            let replacement_id = occupancy_groups(&[replacement.clone()])[0].id.clone();
+            assert_eq!(forward[0].id, replacement_id);
+            assert!(!replacement_id.contains("/Users"));
+            assert!(!replacement_id.contains("private"));
+            replacement.uid = Some(502);
+            assert_ne!(forward[0].id, occupancy_groups(&[replacement])[0].id);
+        }
+    }
+
+    #[test]
+    fn developer_labels_name_unattributed_groups_but_not_application_groups() {
+        let path = "/Users/test/.local/share/claude/versions/2.1.294";
+        let mut candidate = raw(42, Some(path));
+        candidate.uid = Some(unsafe { libc::geteuid() });
+        candidate.name = "2.1.294".into();
+        let labeled = unattributed(candidate);
+        let mut unverified = labeled.clone();
+        unverified.identity.pid = 43;
+        unverified.identity.status = Validity::Stale;
+        unverified.id = unverified.identity.object_id();
+        for processes in [
+            vec![unverified.clone(), labeled.clone()],
+            vec![labeled.clone(), unverified],
+        ] {
+            let groups = occupancy_groups(&processes);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].name, "Claude Code 2.1.294");
+            assert!(groups[0].explanation.starts_with("Unattributed:"));
+        }
+        let mut other_version = labeled.clone();
+        other_version.identity.pid = 44;
+        other_version.id = other_version.identity.object_id();
+        other_version.executable_path =
+            Some("/Users/test/.local/share/claude/versions/3.0.0".into());
+        let groups = occupancy_groups(&[labeled.clone(), other_version]);
+        assert_eq!(groups.len(), 2);
+        assert!(groups.iter().any(|g| g.name == "Claude Code 3.0.0"));
+
+        let mut application = labeled;
+        application.attribution.application = Some(app(42, "/Applications/Test.app").app);
+        let groups = occupancy_groups(&[application.clone()]);
+        assert_eq!(groups[0].name, "Test");
+        assert_eq!(groups[0].id, format!("app:{}", application.id));
+    }
+
+    #[test]
+    fn unattributed_totals_retain_unknown_memory_and_system_category() {
+        let mut system = unattributed(raw(42, Some("/opt/bin/node")));
+        system.category = Category::System;
+        let mut missing = unattributed(raw(43, Some("/opt/bin/node")));
+        missing.memory_bytes = Metric::unavailable(Validity::Denied, "test", "denied");
+        for processes in [vec![system.clone(), missing.clone()], vec![missing, system]] {
+            let groups = occupancy_groups(&processes);
+            assert_eq!(groups.len(), 1);
+            assert_eq!(groups[0].category, Category::System);
+            assert_eq!(groups[0].memory_bytes.status, Validity::Unknown);
+            assert_eq!(groups[0].memory_bytes.value, None);
         }
     }
 
