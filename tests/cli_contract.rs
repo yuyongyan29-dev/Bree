@@ -358,6 +358,75 @@ mod rules {
     }
 
     #[test]
+    fn list_json_uses_only_categories_the_collector_assigns() {
+        let store = IsolatedStore::new();
+        let output = store.run(&["list", "--json"]);
+        assert!(output.status.success());
+        let data: Value = serde_json::from_slice(&output.stdout).unwrap();
+        for item in data["processes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(data["groups"].as_array().unwrap())
+        {
+            let category = item["category"].as_str().unwrap();
+            assert!(
+                ["application", "system", "unknown"].contains(&category),
+                "{category}"
+            );
+        }
+    }
+
+    #[test]
+    fn doctor_text_reports_storage_as_one_readable_line() {
+        let storage_lines = |output: Output| -> Vec<String> {
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let text = String::from_utf8(output.stdout).unwrap();
+            let lines: Vec<String> = text
+                .lines()
+                .filter(|line| line.starts_with("Storage"))
+                .map(str::to_owned)
+                .collect();
+            for line in &lines {
+                assert!(!line.contains(['{', '}', '"']), "raw JSON: {line}");
+            }
+            lines
+        };
+        let store = IsolatedStore::new();
+        let missing = storage_lines(store.run(&["doctor"]));
+        assert_eq!(missing.len(), 1);
+        assert!(missing[0].contains("(missing)"), "{}", missing[0]);
+        assert!(missing[0].contains("rules default, revision 0, 0 rules"));
+        assert!(missing[0].contains("journal missing"));
+        assert!(missing[0].ends_with("write not probed"));
+        assert!(!store.0.exists());
+
+        store.private_root();
+        store.write("state.json", "{bad");
+        let invalid = storage_lines(store.run(&["doctor"]));
+        assert_eq!(invalid.len(), 2);
+        assert!(invalid[0].contains("(ready) · rules invalid · journal missing"));
+        assert!(invalid[1].starts_with("Storage error: Rule file is corrupt"));
+        assert_eq!(
+            fs::read_to_string(store.0.join("state.json")).unwrap(),
+            "{bad"
+        );
+
+        let relative = Command::new(env!("CARGO_BIN_EXE_bree"))
+            .env("BREE_DATA_DIR", "relative-bree-data")
+            .arg("doctor")
+            .output()
+            .unwrap();
+        let unavailable = storage_lines(relative);
+        assert_eq!(unavailable[0], "Storage: unavailable · write not probed");
+        assert!(unavailable[1].contains("must be an absolute path"));
+    }
+
+    #[test]
     fn dry_run_freezes_read_only_plan_and_writes_only_summary() {
         let store = IsolatedStore::new();
         let output = store.run(&["clean", "--dry-run", "--json"]);

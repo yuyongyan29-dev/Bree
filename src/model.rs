@@ -92,7 +92,6 @@ impl ProcessIdentity {
 #[serde(rename_all = "snake_case")]
 pub enum Category {
     Application,
-    AiDevelopment,
     System,
     Unknown,
 }

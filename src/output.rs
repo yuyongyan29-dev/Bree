@@ -12,8 +12,19 @@ pub fn bytes(value: u64) -> String {
 pub fn metric_bytes(metric: &Metric<u64>) -> String {
     match (metric.status, metric.value) {
         (Validity::Ok, Some(value)) => bytes(value),
-        (Validity::Denied, _) => "— / Permission denied".into(),
-        _ => "— / Unknown".into(),
+        (status, _) => format!("— / {}", missing_text(status)),
+    }
+}
+
+/// Text output keeps each missing cause distinct; none of them is a zero value.
+pub fn missing_text(status: Validity) -> &'static str {
+    match status {
+        Validity::Denied => "Permission denied",
+        Validity::Unsupported => "Unsupported",
+        Validity::Exited => "Exited",
+        Validity::Stale => "Stale",
+        // An Ok status without a value is malformed, so it is reported as unknown.
+        Validity::Unknown | Validity::Ok => "Unknown",
     }
 }
 
@@ -29,7 +40,6 @@ pub fn pressure_text(metric: &Metric<Pressure>) -> String {
 pub fn category_text(category: Category) -> &'static str {
     match category {
         Category::Application => "Application",
-        Category::AiDevelopment => "AI / development",
         Category::System => "System",
         Category::Unknown => "Unattributed",
     }
@@ -183,5 +193,21 @@ mod tests {
             .contains("Permission denied")
         );
         assert_eq!(metric_bytes(&Metric::ok(0, "test")), "0.0 MiB");
+    }
+    #[test]
+    fn each_missing_cause_has_its_own_text() {
+        let text = |status| metric_bytes(&Metric::<u64>::unavailable(status, "test", "missing"));
+        assert_eq!(text(Validity::Denied), "— / Permission denied");
+        assert_eq!(text(Validity::Unsupported), "— / Unsupported");
+        assert_eq!(text(Validity::Exited), "— / Exited");
+        assert_eq!(text(Validity::Stale), "— / Stale");
+        assert_eq!(text(Validity::Unknown), "— / Unknown");
+        let malformed = Metric::<u64> {
+            value: None,
+            status: Validity::Ok,
+            source: "test".into(),
+            reason: None,
+        };
+        assert_eq!(metric_bytes(&malformed), "— / Unknown");
     }
 }
