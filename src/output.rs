@@ -185,18 +185,14 @@ mod tests {
     #[test]
     fn missing_metrics_never_look_like_zero() {
         assert!(
-            metric_bytes(&Metric::<u64>::unavailable(
-                Validity::Denied,
-                "test",
-                "denied"
-            ))
-            .contains("Permission denied")
+            metric_bytes(&Metric::<u64>::unavailable(Validity::Denied, "denied"))
+                .contains("Permission denied")
         );
-        assert_eq!(metric_bytes(&Metric::ok(0, "test")), "0.0 MiB");
+        assert_eq!(metric_bytes(&Metric::ok(0)), "0.0 MiB");
     }
     #[test]
     fn each_missing_cause_has_its_own_text() {
-        let text = |status| metric_bytes(&Metric::<u64>::unavailable(status, "test", "missing"));
+        let text = |status| metric_bytes(&Metric::<u64>::unavailable(status, "missing"));
         assert_eq!(text(Validity::Denied), "— / Permission denied");
         assert_eq!(text(Validity::Unsupported), "— / Unsupported");
         assert_eq!(text(Validity::Exited), "— / Exited");
@@ -205,7 +201,6 @@ mod tests {
         let malformed = Metric::<u64> {
             value: None,
             status: Validity::Ok,
-            source: "test".into(),
             reason: None,
         };
         assert_eq!(metric_bytes(&malformed), "— / Unknown");

@@ -17,28 +17,21 @@ pub enum Validity {
 pub struct Metric<T> {
     pub value: Option<T>,
     pub status: Validity,
-    pub source: String,
     pub reason: Option<String>,
 }
 
 impl<T> Metric<T> {
-    pub fn ok(value: T, source: impl Into<String>) -> Self {
+    pub fn ok(value: T) -> Self {
         Self {
             value: Some(value),
             status: Validity::Ok,
-            source: source.into(),
             reason: None,
         }
     }
-    pub fn unavailable(
-        status: Validity,
-        source: impl Into<String>,
-        reason: impl Into<String>,
-    ) -> Self {
+    pub fn unavailable(status: Validity, reason: impl Into<String>) -> Self {
         Self {
             value: None,
             status,
-            source: source.into(),
             reason: Some(reason.into()),
         }
     }
@@ -220,9 +213,9 @@ mod tests {
     }
     #[test]
     fn zero_and_missing_are_distinct() {
-        assert_eq!(Metric::ok(0_u64, "test").value, Some(0));
+        assert_eq!(Metric::ok(0_u64).value, Some(0));
         assert_eq!(
-            Metric::<u64>::unavailable(Validity::Denied, "test", "denied").value,
+            Metric::<u64>::unavailable(Validity::Denied, "denied").value,
             None
         );
     }

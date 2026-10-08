@@ -1085,11 +1085,7 @@ fn process_detail(process: &ProcessInfo) -> Vec<Line<'static>> {
             metric_bytes(&process.memory_bytes),
             safe_text(&process.metric_kind)
         )),
-        Line::from(format!(
-            "Validity {:?} · source {}",
-            process.memory_bytes.status,
-            safe_text(&process.memory_bytes.source)
-        )),
+        Line::from(format!("Validity {:?}", process.memory_bytes.status)),
         Line::from(format!("Instance {}", safe_text(&process.id))),
         Line::from(format!(
             "Identity {:?} · started {} s + {} µs",
@@ -1135,10 +1131,7 @@ fn process_detail(process: &ProcessInfo) -> Vec<Line<'static>> {
         )));
     }
     if let Some(cpu) = process.cpu_one_core_percent.value {
-        lines.push(Line::from(format!(
-            "CPU {cpu:.1}% (one core) · source {}",
-            safe_text(&process.cpu_one_core_percent.source)
-        )));
+        lines.push(Line::from(format!("CPU {cpu:.1}% (one core)")));
     } else {
         lines.push(Line::from(format!(
             "CPU — · {}",
@@ -1191,9 +1184,8 @@ fn render_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
                 category_name(group.category)
             )));
             lines.push(Line::from(format!(
-                "Metric {} · source {}",
-                safe_text(&group.metric_kind),
-                safe_text(&group.memory_bytes.source)
+                "Metric {}",
+                safe_text(&group.metric_kind)
             )));
             lines.push(Line::from(safe_text(&group.explanation)));
             lines.push(Line::from(since_sample(snapshot)));
@@ -1263,12 +1255,12 @@ mod tests {
             sampled_at_unix_ms: 1000,
             collected_in_ms: 12,
             system: SystemMemory {
-                total_bytes: Metric::ok(16 * 1024 * 1024 * 1024, "test"),
-                used_bytes: Metric::ok(8 * 1024 * 1024 * 1024, "test"),
-                compressed_bytes: Metric::ok(0, "test"),
-                swap_used_bytes: Metric::ok(0, "test"),
-                cached_bytes: Metric::ok(1, "test"),
-                pressure: Metric::ok(Pressure::Normal, "test"),
+                total_bytes: Metric::ok(16 * 1024 * 1024 * 1024),
+                used_bytes: Metric::ok(8 * 1024 * 1024 * 1024),
+                compressed_bytes: Metric::ok(0),
+                swap_used_bytes: Metric::ok(0),
+                cached_bytes: Metric::ok(1),
+                pressure: Metric::ok(Pressure::Normal),
                 used_definition: "test".into(),
             },
             processes: vec![ProcessInfo {
@@ -1278,9 +1270,9 @@ mod tests {
                 uid: Some(501),
                 name: "中文应用".into(),
                 executable_path: Some("/Users/example/私有路径/程序".into()),
-                memory_bytes: Metric::ok(100 * 1024 * 1024, "test_rss"),
+                memory_bytes: Metric::ok(100 * 1024 * 1024),
                 metric_kind: "rss".into(),
-                cpu_one_core_percent: Metric::ok(1.0, "test"),
+                cpu_one_core_percent: Metric::ok(1.0),
                 category: Category::Application,
                 attribution: Attribution {
                     application: None,
@@ -1293,7 +1285,7 @@ mod tests {
                 id: "group".into(),
                 name: "中文应用".into(),
                 category: Category::Application,
-                memory_bytes: Metric::ok(100 * 1024 * 1024, "test_rss"),
+                memory_bytes: Metric::ok(100 * 1024 * 1024),
                 metric_kind: "rss".into(),
                 process_ids: vec![id],
                 explanation: "Test group".into(),
@@ -1410,10 +1402,10 @@ mod tests {
         let mut sample = snapshot();
         let mut zero = sample.groups[0].clone();
         zero.id = "zero".into();
-        zero.memory_bytes = Metric::ok(0, "test");
+        zero.memory_bytes = Metric::ok(0);
         let mut unknown = zero.clone();
         unknown.id = "unknown".into();
-        unknown.memory_bytes = Metric::unavailable(Validity::Denied, "test", "denied");
+        unknown.memory_bytes = Metric::unavailable(Validity::Denied, "denied");
         let mut different = zero.clone();
         different.id = "footprint".into();
         different.metric_kind = "footprint".into();
@@ -1430,7 +1422,7 @@ mod tests {
         let mut next = snapshot();
         let mut second = next.groups[0].clone();
         second.id = "new-instance".into();
-        second.memory_bytes = Metric::ok(200 * 1024 * 1024, "test");
+        second.memory_bytes = Metric::ok(200 * 1024 * 1024);
         next.groups.push(second);
         app.received(Ok(next));
         assert_eq!(app.selected_group.as_deref(), Some("group"));
@@ -1683,9 +1675,9 @@ mod tests {
                     3 => {
                         let mut sample = snapshot();
                         sample.system.used_bytes =
-                            Metric::unavailable(Validity::Denied, "fixture", "permission denied");
+                            Metric::unavailable(Validity::Denied, "permission denied");
                         sample.system.total_bytes =
-                            Metric::unavailable(Validity::Denied, "fixture", "permission denied");
+                            Metric::unavailable(Validity::Denied, "permission denied");
                         app.received(Ok(sample));
                         app.received(Err(
                             "Long refresh failure with details that must not hide the menu".into(),
@@ -1812,15 +1804,11 @@ mod tests {
     fn compact_home_keeps_navigation_visible_with_missing_metrics_and_refresh_failure() {
         let mut app = App::new(false);
         let mut sample = snapshot();
-        sample.system.used_bytes =
-            Metric::unavailable(Validity::Denied, "fixture", "permission denied");
-        sample.system.total_bytes =
-            Metric::unavailable(Validity::Denied, "fixture", "permission denied");
-        sample.system.compressed_bytes =
-            Metric::unavailable(Validity::Unsupported, "fixture", "unsupported");
-        sample.system.swap_used_bytes =
-            Metric::unavailable(Validity::Unknown, "fixture", "unknown");
-        sample.system.pressure = Metric::unavailable(Validity::Unknown, "fixture", "unknown");
+        sample.system.used_bytes = Metric::unavailable(Validity::Denied, "permission denied");
+        sample.system.total_bytes = Metric::unavailable(Validity::Denied, "permission denied");
+        sample.system.compressed_bytes = Metric::unavailable(Validity::Unsupported, "unsupported");
+        sample.system.swap_used_bytes = Metric::unavailable(Validity::Unknown, "unknown");
+        sample.system.pressure = Metric::unavailable(Validity::Unknown, "unknown");
         app.received(Ok(sample));
         app.received(Err(
             "refresh failed with a long permission error and private path".into(),
@@ -2105,8 +2093,7 @@ mod tests {
 
     #[test]
     fn compact_memory_cells_keep_missing_causes_distinct() {
-        let cell =
-            |status| display_memory(&Metric::<u64>::unavailable(status, "test", "missing"), true);
+        let cell = |status| display_memory(&Metric::<u64>::unavailable(status, "missing"), true);
         let cells = [
             (Validity::Denied, "Denied"),
             (Validity::Unsupported, "N/A"),
@@ -2119,10 +2106,7 @@ mod tests {
             assert!(expected.chars().count() <= 9);
         }
         assert_eq!(
-            display_memory(
-                &Metric::unavailable(Validity::Exited, "test", "gone"),
-                false
-            ),
+            display_memory(&Metric::unavailable(Validity::Exited, "gone"), false),
             "— / Exited"
         );
     }

@@ -12,7 +12,6 @@ mod platform;
 mod platform;
 
 pub const PROCESS_METRIC_KIND: &str = "rss";
-const CPU_SOURCE: &str = "libproc PROC_PIDTASKINFO Mach CPU ticks converted by mach_timebase_info / monotonic elapsed time";
 
 pub(crate) struct RawProcess {
     pub identity: ProcessIdentity,
@@ -89,7 +88,6 @@ impl Collector {
                         } else {
                             p.memory_bytes.status
                         },
-                        CPU_SOURCE,
                         "Identity or cumulative CPU time is unreadable",
                     ),
                 };
@@ -159,14 +157,12 @@ fn cpu_between(previous: Option<(u64, Instant)>, total_ns: u64, now: Instant) ->
     let Some((previous_total, previous_time)) = previous else {
         return Metric::unavailable(
             Validity::Unknown,
-            CPU_SOURCE,
             "The first sample establishes a baseline; the next sample needs a real time interval",
         );
     };
     let Some(delta_cpu) = total_ns.checked_sub(previous_total) else {
         return Metric::unavailable(
             Validity::Stale,
-            CPU_SOURCE,
             "Cumulative CPU time decreased; rebuilding the baseline",
         );
     };
@@ -174,15 +170,14 @@ fn cpu_between(previous: Option<(u64, Instant)>, total_ns: u64, now: Instant) ->
     if elapsed.as_secs() >= 30 {
         return Metric::unavailable(
             Validity::Unknown,
-            CPU_SOURCE,
             "Sampling interval reached 30 seconds; rebuilding the CPU baseline after wake or prolonged inactivity",
         );
     }
     let elapsed_ns = elapsed.as_nanos();
     if elapsed_ns == 0 {
-        return Metric::unavailable(Validity::Unknown, CPU_SOURCE, "Sampling interval is zero");
+        return Metric::unavailable(Validity::Unknown, "Sampling interval is zero");
     }
-    Metric::ok(delta_cpu as f64 / elapsed_ns as f64 * 100.0, CPU_SOURCE)
+    Metric::ok(delta_cpu as f64 / elapsed_ns as f64 * 100.0)
 }
 
 /// Only ordinary (Regular activation policy) apps in the current sample lead a group.
@@ -379,29 +374,23 @@ fn occupancy_groups(processes: &[ProcessInfo]) -> Vec<OccupancyGroup> {
         group.process_ids.push(process.id.clone());
         if first_member {
             // A one-process group is that exact metric, including its denial,
-            // exit, unsupported status, source, and reason. Only an incomplete
+            // exit, unsupported status, and reason. Only an incomplete
             // aggregate requires an aggregate-level unknown value.
             continue;
         }
         match (group.memory_bytes.value, process.memory_bytes.value) {
             (Some(sum), Some(value)) if process.memory_bytes.status == Validity::Ok => {
                 match sum.checked_add(value) {
-                    Some(total) => {
-                        group.memory_bytes = Metric::ok(total, "sum of distinct process RSS")
-                    }
+                    Some(total) => group.memory_bytes = Metric::ok(total),
                     None => {
-                        group.memory_bytes = Metric::unavailable(
-                            Validity::Unknown,
-                            "sum of distinct process RSS",
-                            "Group total overflow",
-                        )
+                        group.memory_bytes =
+                            Metric::unavailable(Validity::Unknown, "Group total overflow")
                     }
                 }
             }
             _ => {
                 group.memory_bytes = Metric::unavailable(
                     Validity::Unknown,
-                    "sum of distinct process RSS",
                     "At least one instance in the group has missing memory; the total is unknown, see individual processes",
                 )
             }
@@ -435,7 +424,7 @@ mod tests {
             uid: Some(501),
             name: "node".into(),
             executable_path: path.map(str::to_string),
-            memory_bytes: Metric::ok(10, "test"),
+            memory_bytes: Metric::ok(10),
             cpu_total_ns: Some(0),
             sampled_at: Instant::now(),
         }
@@ -470,7 +459,7 @@ mod tests {
             executable_path: raw.executable_path,
             memory_bytes: raw.memory_bytes,
             metric_kind: PROCESS_METRIC_KIND.into(),
-            cpu_one_core_percent: Metric::unavailable(Validity::Unknown, "test", "baseline"),
+            cpu_one_core_percent: Metric::unavailable(Validity::Unknown, "baseline"),
             category: Category::Application,
             attribution,
         }
@@ -559,7 +548,7 @@ mod tests {
         for path in [Some("/Users/example/private/tool"), None] {
             let first = unattributed(raw(42, path));
             let mut second = unattributed(raw(43, path));
-            second.memory_bytes = Metric::ok(20, "test");
+            second.memory_bytes = Metric::ok(20);
             if path.is_some() {
                 second.name = "alternate name".into();
             }
@@ -622,7 +611,7 @@ mod tests {
         let mut system = unattributed(raw(42, Some("/opt/bin/node")));
         system.category = Category::System;
         let mut missing = unattributed(raw(43, Some("/opt/bin/node")));
-        missing.memory_bytes = Metric::unavailable(Validity::Denied, "test", "denied");
+        missing.memory_bytes = Metric::unavailable(Validity::Denied, "denied");
         for processes in [vec![system.clone(), missing.clone()], vec![missing, system]] {
             let groups = occupancy_groups(&processes);
             assert_eq!(groups.len(), 1);
@@ -739,7 +728,7 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].memory_bytes.value, Some(20));
         assert_eq!(groups[0].process_ids.len(), 2);
-        processes[1].memory_bytes = Metric::unavailable(Validity::Denied, "test", "denied");
+        processes[1].memory_bytes = Metric::unavailable(Validity::Denied, "denied");
         let groups = occupancy_groups(&processes);
         assert_eq!(groups[0].memory_bytes.value, None);
         assert_eq!(groups[0].memory_bytes.status, Validity::Unknown);
@@ -762,12 +751,10 @@ mod tests {
                     explanation: "no evidence".into(),
                 },
             );
-            process.memory_bytes =
-                Metric::unavailable(status, "fixture RSS source", "specific OS error");
+            process.memory_bytes = Metric::unavailable(status, "specific OS error");
             let groups = occupancy_groups(&[process]);
             assert_eq!(groups[0].memory_bytes.status, status);
             assert_eq!(groups[0].memory_bytes.value, None);
-            assert_eq!(groups[0].memory_bytes.source, "fixture RSS source");
             assert_eq!(
                 groups[0].memory_bytes.reason.as_deref(),
                 Some("specific OS error")

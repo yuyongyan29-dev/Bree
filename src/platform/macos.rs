@@ -13,9 +13,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-const RSS_SOURCE: &str = "libproc PROC_PIDTASKINFO.pti_resident_size (bytes)";
-const VM_SOURCE: &str = "Mach host_statistics64(HOST_VM_INFO64)";
-const PRESSURE_SOURCE: &str = "sysctl kern.memorystatus_vm_pressure_level (kernel dispatch level)";
 static MAIN_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static APP_CACHE: OnceLock<Mutex<Vec<AppEvidence>>> = OnceLock::new();
 
@@ -69,8 +66,8 @@ impl ReadError {
             message: operation.into(),
         }
     }
-    fn metric<T>(self, source: &str) -> Metric<T> {
-        Metric::unavailable(self.status, source, self.message)
+    fn metric<T>(self) -> Metric<T> {
+        Metric::unavailable(self.status, self.message)
     }
 }
 
@@ -98,13 +95,12 @@ impl Backend {
             _ => ("unknown-boot".into(), false),
         };
         let total_memory = match sysctl_value::<u64>(c"hw.memsize") {
-            Ok(value) if value > 0 => Metric::ok(value, "sysctl hw.memsize"),
+            Ok(value) if value > 0 => Metric::ok(value),
             Ok(_) => Metric::unavailable(
                 Validity::Unknown,
-                "sysctl hw.memsize",
                 "Total physical memory is zero; result invalid",
             ),
-            Err(e) => e.metric("sysctl hw.memsize"),
+            Err(e) => e.metric(),
         };
         let page_size = match unsafe { libc::sysconf(libc::_SC_PAGESIZE) } {
             value if value > 0 => Some(value as u64),
@@ -140,40 +136,33 @@ impl Backend {
                 let compressed = compressor.checked_mul(page_size);
                 let cached = (file_backed + purgeable).checked_mul(page_size);
                 (
-                    checked_bytes(used, VM_SOURCE),
-                    checked_bytes(compressed, VM_SOURCE),
-                    checked_bytes(cached, VM_SOURCE),
+                    checked_bytes(used),
+                    checked_bytes(compressed),
+                    checked_bytes(cached),
                 )
             }
             (Err(e), _) => {
-                let missing = || Metric::unavailable(e.status, VM_SOURCE, &e.message);
+                let missing = || Metric::unavailable(e.status, &e.message);
                 (missing(), missing(), missing())
             }
             (_, None) => {
-                let missing = || {
-                    Metric::unavailable(
-                        Validity::Unknown,
-                        "sysconf _SC_PAGESIZE",
-                        "Page size is unreadable",
-                    )
-                };
+                let missing = || Metric::unavailable(Validity::Unknown, "Page size is unreadable");
                 (missing(), missing(), missing())
             }
         };
         let swap_used_bytes = match sysctl_value::<libc::xsw_usage>(c"vm.swapusage") {
-            Ok(swap) => Metric::ok(swap.xsu_used, "sysctl vm.swapusage.xsu_used (bytes)"),
-            Err(e) => e.metric("sysctl vm.swapusage.xsu_used (bytes)"),
+            Ok(swap) => Metric::ok(swap.xsu_used),
+            Err(e) => e.metric(),
         };
         let pressure = match sysctl_value::<u32>(c"kern.memorystatus_vm_pressure_level") {
-            Ok(1) => Metric::ok(Pressure::Normal, PRESSURE_SOURCE),
-            Ok(2) => Metric::ok(Pressure::Elevated, PRESSURE_SOURCE),
-            Ok(4) => Metric::ok(Pressure::High, PRESSURE_SOURCE),
+            Ok(1) => Metric::ok(Pressure::Normal),
+            Ok(2) => Metric::ok(Pressure::Elevated),
+            Ok(4) => Metric::ok(Pressure::High),
             Ok(value) => Metric::unavailable(
                 Validity::Unknown,
-                PRESSURE_SOURCE,
                 format!("Unrecognized kernel level {value}"),
             ),
-            Err(e) => e.metric(PRESSURE_SOURCE),
+            Err(e) => e.metric(),
         };
         SystemMemory { total_bytes: self.total_memory.clone(), used_bytes, compressed_bytes,
             swap_used_bytes, cached_bytes, pressure,
@@ -213,7 +202,7 @@ impl Backend {
             uid: None,
             name: format!("PID {pid}"),
             executable_path: None,
-            memory_bytes: Metric::unavailable(Validity::Unknown, RSS_SOURCE, "Identity not read"),
+            memory_bytes: Metric::unavailable(Validity::Unknown, "Identity not read"),
             cpu_total_ns: None,
             sampled_at: Instant::now(),
         };
@@ -221,7 +210,7 @@ impl Backend {
             Ok(value) => value,
             Err(e) => {
                 result.identity.status = e.status;
-                result.memory_bytes = e.metric(RSS_SOURCE);
+                result.memory_bytes = e.metric();
                 return result;
             }
         };
@@ -245,7 +234,7 @@ impl Backend {
             {
                 match task {
                     Ok(task) => {
-                        result.memory_bytes = Metric::ok(task.pti_resident_size, RSS_SOURCE);
+                        result.memory_bytes = Metric::ok(task.pti_resident_size);
                         // XNU fills these with recount_times_mach. They are NOT nanoseconds on ARM.
                         result.cpu_total_ns = task
                             .pti_total_user
@@ -255,7 +244,7 @@ impl Backend {
                                     .and_then(|ratio| ticks_to_ns(ticks, ratio))
                             });
                     }
-                    Err(e) => result.memory_bytes = e.metric(RSS_SOURCE),
+                    Err(e) => result.memory_bytes = e.metric(),
                 }
             }
             Ok(_) => {
@@ -267,14 +256,13 @@ impl Backend {
                 result.identity.status = status;
                 result.memory_bytes = Metric::unavailable(
                     status,
-                    RSS_SOURCE,
                     "Instance identity differs before and after sampling, or its identity cannot be verified",
                 );
                 result.executable_path = None;
             }
             Err(e) => {
                 result.identity.status = e.status;
-                result.memory_bytes = e.metric(RSS_SOURCE);
+                result.memory_bytes = e.metric();
                 result.executable_path = None;
             }
         }
@@ -382,10 +370,10 @@ fn read_applications_on_main_thread() -> Vec<AppEvidence> {
     })
 }
 
-fn checked_bytes(value: Option<u64>, source: &str) -> Metric<u64> {
+fn checked_bytes(value: Option<u64>) -> Metric<u64> {
     match value {
-        Some(value) => Metric::ok(value, source),
-        None => Metric::unavailable(Validity::Unknown, source, "Memory byte count overflow"),
+        Some(value) => Metric::ok(value),
+        None => Metric::unavailable(Validity::Unknown, "Memory byte count overflow"),
     }
 }
 
@@ -653,7 +641,7 @@ mod tests {
     fn sysctl_errors_are_missing_and_unknown_sizes_are_rejected() {
         let missing = sysctl_value::<u64>(c"bree.invalid.nonexistent")
             .unwrap_err()
-            .metric::<u64>("test");
+            .metric::<u64>();
         assert_eq!(missing.value, None);
         assert!(sysctl_value::<u8>(c"hw.memsize").is_err());
     }

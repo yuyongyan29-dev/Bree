@@ -120,9 +120,9 @@ mod tests {
             uid: Some(unsafe { libc::geteuid() }),
             name: "name deliberately not used".into(),
             executable_path: path.map(str::to_owned),
-            memory_bytes: Metric::ok(1, "test"),
+            memory_bytes: Metric::ok(1),
             metric_kind: "rss".into(),
-            cpu_one_core_percent: Metric::ok(0.0, "test"),
+            cpu_one_core_percent: Metric::ok(0.0),
             category: Category::Unknown,
             attribution: Attribution {
                 application: None,

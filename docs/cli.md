@@ -82,9 +82,23 @@ CPU 首次采样只建立基线，后续采样使用实际时间差计算单核�
 
 匹配安装布局，不读取运行时版本或锁定已观察过的版本号；Claude Code 的版本后缀、额外路径层级及其他安装位置不会匹配。标签只解释安装来源，不验证签名、任务所属项目、完成状态、共享关系或可安全回收性；未知的 node、python 等进程不会被猜测为某个 AI 任务。
 
+### 指标来源
+
+| 指标 | macOS 数据来源与计算方式 |
+|---|---|
+| `system.total_bytes` | `sysctl hw.memsize`，物理内存字节数 |
+| `system.used_bytes` | `host_statistics64(HOST_VM_INFO64)`：`(internal_page_count.saturating_sub(purgeable_count) + wire_count + compressor_page_count) × sysconf(_SC_PAGESIZE)` |
+| `system.compressed_bytes` | 同一 VM 计数器中的 `compressor_page_count × page_size`，实际压缩占用 |
+| `system.cached_bytes` | 同一 VM 计数器中的 `(external_page_count + purgeable_count) × page_size`，估计缓存 |
+| `system.swap_used_bytes` | `sysctl vm.swapusage` 的 `xsu_used` 字节数 |
+| `system.pressure` | `sysctl kern.memorystatus_vm_pressure_level`：1／2／4 对应 Normal／Elevated／High |
+| `processes[].memory_bytes` | `libproc PROC_PIDTASKINFO.pti_resident_size`，RSS 字节数 |
+| `processes[].cpu_one_core_percent` | `PROC_PIDTASKINFO` 的 user + system Mach ticks，经 `mach_timebase_info` 转换后，以同一实例的 CPU 时间增量除以单调时钟的实际间隔，再乘 100；首次采样只建立基线 |
+| `groups[].memory_bytes` | 组内不同实例的 RSS 总和；单成员保留该成员的有效性与原因，多成员有缺失或求和溢出时总量为 unknown |
+
 ## JSON 与退出码
 
-JSON 的 `schema_version` 为 2。数值内部使用字节，文本显示 MiB／GiB。每个指标包含 `value`、`status`、`source` 和 `reason`；未知或无权限时使用 `null`，不填零。
+JSON 的 `schema_version` 为 2。数值内部使用字节，文本显示 MiB／GiB。每个指标包含 `value`、`status` 和 `reason`；未知或无权限时使用 `null`，不填零。
 
 `list --json` 的顶层键为 `schema_version`、`sampled_at_unix_ms`、`collected_in_ms`、`system`、`processes`、`groups`、`coverage`、`diagnostics` 和 `view`。
 
@@ -94,7 +108,7 @@ JSON 的 `schema_version` 为 2。数值内部使用字节，文本显示 MiB／
 
 schema 2 移除了 `list`／`watch`／`inspect` 的 `policy`、所有相关输出的 `policy_error`、`policy_state_valid`，以及 `status` 的 `policy_summary` 和进程对象的 `protection_reasons`、`quit_supported`。`doctor` 不再输出 `rule_storage` 或 `capability_gate_reason`；其 `capabilities` 移除了 `rules_enabled`、`dry_run_enabled`、`cleanup_enabled`、`a1_enabled`、`a2_enabled`、`cleanup_session_enabled`、`history_enabled`，现在只含 `read_only`、`ai_attribution_enabled` 和 `background_service`。
 
-指标仍包含 `source`，对象 ID 仍使用完整实例身份；`sampled_at_unix_ms` 仍为 Unix 毫秒时间戳。
+指标不再包含 `source`，来源统一见下表；对象 ID 仍使用完整实例身份；`sampled_at_unix_ms` 仍为 Unix 毫秒时间戳。
 
 stdout 只输出命令结果，诊断写 stderr。默认 `list`／`watch` JSON 省略路径；`inspect` JSON 将用户主目录替换为 `~`，仍可能包含项目名，分享前请检查。
 

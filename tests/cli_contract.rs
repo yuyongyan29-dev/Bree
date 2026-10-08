@@ -254,6 +254,15 @@ fn real_snapshot_preserves_missing_values_and_redacts_paths() {
     for process in processes {
         assert!(process["executable_path"].is_null());
         let metric = &process["memory_bytes"];
+        for metric in [&process["memory_bytes"], &process["cpu_one_core_percent"]] {
+            let keys: Vec<_> = metric
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            assert_eq!(keys, ["reason", "status", "value"]);
+        }
         if metric["status"] != "ok" {
             assert!(metric["value"].is_null());
         }
