@@ -119,12 +119,6 @@ Packaging, notarization submission, publishing a GitHub Release, updating the ta
 
 See the [user guide](docs/cli.md) for metric definitions and capability scope.
 
-## Submitting a pull request
-
-Use a separate branch and keep the scope clear. Describe the concrete problem, resulting behavior, reproduction or verification steps, and anything still unverified. Reference the relevant issue for a bug fix and update related documentation for feature changes.
-
-Do not add unrelated product designs, research materials, or unused build output to the CLI repository.
-
 ## Contribution license
 
 Contributions are released under Bree's GPL-3.0 license. Do not submit secrets, personal configuration, internal development documents, experiment output, or design assets.

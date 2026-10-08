@@ -1,9 +1,9 @@
 [package]
 name = "bree-cli"
-version = "0.3.0-alpha.7"
+version = "0.4.0-alpha.1"
 edition = "2024"
 rust-version = "1.96"
-description = "Local memory inspection and guarded cleanup sessions for macOS"
+description = "Read-only local memory inspection for macOS"
 license = "GPL-3.0-only"
 repository = "https://github.com/yuyongyan29-dev/Bree"
 publish = false

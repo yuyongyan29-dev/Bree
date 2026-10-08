@@ -26,7 +26,7 @@
 
 Bree brings system memory pressure, application usage, and process details into a terminal interface you can navigate with your keyboard. Find what is using memory, inspect the evidence behind each application's grouping and metrics, or follow changes with direct commands and JSON output.
 
-**Bree is a read-only viewer with no persistent state. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. The package version remains `0.3.0-alpha.7`.**
+**Bree is a read-only viewer with no persistent state. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. The package version is `0.4.0-alpha.1`.**
 
 This source tree includes the breaking changes planned for 0.4: `clean` and `history` are removed, and JSON uses schema 2. Installation releases have not changed. Bree does not read, migrate, or delete data left by earlier 0.3 or older builds; you may manually remove `~/Library/Application Support/Bree` if no longer needed.
 
