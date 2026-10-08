@@ -28,7 +28,7 @@ Bree 把系统内存压力、应用与进程占用放进一个键盘操作的终
 
 **Bree 是无持久状态的只读查看器。已验证原生 Apple Silicon、macOS 27.0.1，其他系统组合尚待验证。包版本为 `0.4.0-alpha.1`。**
 
-当前源码已包含面向 0.4 的不兼容变更：移除 `clean`、`history`，JSON 使用 schema 2；安装入口的发行版本未变。Bree 不读取、迁移或删除此前 0.3 及更早版本留下的数据；不再需要时，可手动删除 `~/Library/Application Support/Bree`。
+0.4 包含不兼容变更：移除 `clean`、`history`，JSON 使用 schema 2。Bree 不读取、迁移或删除此前 0.3 及更早版本留下的数据；不再需要时，可手动删除 `~/Library/Application Support/Bree`。
 
 <!-- screenshot: TUI Home and Resources -->
 

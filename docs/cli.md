@@ -2,7 +2,7 @@
 
 Bree 是无持久状态的只读查看器，在终端采集、展示和导出本机系统内存与应用／进程占用。包版本为 `0.4.0-alpha.1`，已验证环境是 Apple Silicon、macOS 27.0.1。
 
-**Bree 不会结束应用或保存数据。** 当前源码已包含面向 0.4 的不兼容变更：只保留 `status`、`list`、`inspect`、`watch`、`doctor`、`license`，移除 `clean` 与 `history`，JSON 使用 schema 2；安装入口的发行版本未变。Bree 不提供后台服务或开机启动。
+**Bree 不会结束应用或保存数据。** 0.4 起只保留 `status`、`list`、`inspect`、`watch`、`doctor`、`license`，移除 `clean` 与 `history`，JSON 使用 schema 2。Bree 不提供后台服务或开机启动。
 
 安装方法见 [安装说明](installation.md)，源码构建与贡献见 [中文贡献指南](../CONTRIBUTING.zh-CN.md)。
 

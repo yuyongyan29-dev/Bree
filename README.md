@@ -28,7 +28,7 @@ Bree brings system memory pressure, application usage, and process details into 
 
 **Bree is a read-only viewer with no persistent state. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. The package version is `0.4.0-alpha.1`.**
 
-This source tree includes the breaking changes planned for 0.4: `clean` and `history` are removed, and JSON uses schema 2. Installation releases have not changed. Bree does not read, migrate, or delete data left by earlier 0.3 or older builds; you may manually remove `~/Library/Application Support/Bree` if no longer needed.
+Version 0.4 includes breaking changes: `clean` and `history` are removed, and JSON uses schema 2. Bree does not read, migrate, or delete data left by earlier 0.3 or older builds; you may manually remove `~/Library/Application Support/Bree` if no longer needed.
 
 <!-- screenshot: TUI Home and Resources -->
 
