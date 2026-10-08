@@ -128,6 +128,8 @@ JSON 保持 `schema_version: 2`。指标包含 `value`、`status`、`reason`，�
 ## 已知限制
 
 - Bree 只读：不结束应用，不保存数据，也没有后台服务。
+- 不同工具的内存读取不是原子采样，进程 RSS 与系统已用内存的口径也不同；读取时刻、单位换算和核验限制见[核对内存数值](docs/cli.zh-CN.md#核对内存数值)。
+- 应用归属要求已验证的 Regular 主应用与同 bundle 内的可执行路径；外部扩展和共享服务可能保持未归属。组内实例数不是任务数，分组总 RSS 不是可回收内存。
 - 发行程序未做 Developer ID 签名、未公证，仅有 ad-hoc 签名；干净账号安装仍未验证。
 - 正式支持仅限维护者 Mac 上实测的 macOS 27、Apple Silicon。其他 macOS 版本未在维护者机器上实测、不支持；macOS 15 CI 结果只作参考。Intel 不支持，curl 安装器会拒绝；Homebrew bottle 只提供 macOS 27。
 - `inspect <pid>` 不检测两次命令之间的 PID 复用。需要绑定采样实例时使用完整进程 ID。

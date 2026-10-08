@@ -82,6 +82,8 @@ CPU 首次采样只建立基线，后续采样使用实际时间差计算单核�
 
 应用分组基于主应用和 bundle 内安装位置等证据。只有普通应用（AppKit 激活策略为 Regular，通常显示在程序坞中）作为主应用；嵌套在主应用 bundle 内的 helper 应用并入该主应用，独立菜单栏、后台及归属冲突的进程仍保持未归属，按同一可执行路径与同一 UID 聚合展示；路径不可读时按同名与同一 UID 合并。不同 UID 不合并，UID 不可读时保留独立实例。每个进程只属于一个分组，合并不代表已确认应用归属。
 
+系统 WebKit／AutoFill、bundle 外扩展、MCP runtime 和 VS Code 扩展目录内的 Codex 可能保持未归属。按可执行路径与 UID 合并不证明属于同一任务。Finder 当前依据 `/System/Library/CoreServices` 安装路径归入 system 分类。
+
 <a id="development-labels"></a>
 
 ### AI／开发工具标签
@@ -108,6 +110,14 @@ CPU 首次采样只建立基线，后续采样使用实际时间差计算单核�
 | `processes[].memory_bytes` | `libproc PROC_PIDTASKINFO.pti_resident_size`，RSS 字节数 |
 | `processes[].cpu_one_core_percent` | `PROC_PIDTASKINFO` 的 user + system Mach ticks，经 `mach_timebase_info` 转换后，以同一实例的 CPU 时间增量除以单调时钟的实际间隔，再乘 100；首次采样只建立基线 |
 | `groups[].memory_bytes` | 组内不同实例的 RSS 总和；单成员保留该成员的有效性与原因，多成员有缺失或求和溢出时总量为 unknown |
+
+### 核对内存数值
+
+核对系统已用内存时，将 `vm_stat` 的 `Anonymous pages`、`Pages purgeable`、`Pages wired down` 和 `Pages occupied by compressor` 分别对应 internal、purgeable、wired 和 compressor，使用 `vm_stat` 报告的页大小，按 `(max(internal - purgeable, 0) + wired + compressor) × page_size` 重算。`Pages occupied by compressor` 是实际压缩占用；`Pages stored in compressor` 是压缩前的页数，不能用来替代它。
+
+Bree 与其他工具不是同一时刻读取。可在 Bree 前后各读一次 `vm_stat`，以范围对照。开发核验脚本 [accuracy-check.py](../scripts/accuracy-check.py) 使用每轮前、并发读取时和每轮后的三次读数。核验已用内存时，在观测范围两侧分别扩展“并发参考值的 1% 或 64 MiB，取较大者”，并保留与该参考值的普通差值。这是本机核验预算，不是产品精度保证；离散读数可能漏掉读取之间的变化。活动监视器对照是独立的人工检查，需要考虑刷新时刻、单位和显示舍入。
+
+进程 RSS 可与 `ps` 的 RSS 按 KiB × 1024 换算为字节后对照。活跃、刚启动或退出的进程可能因读取时刻不同产生差值；仅按 PID 对照不能排除跨工具读取期间的 PID 复用。不可读指标保持 `null` 并带状态和原因，不能当成零。共享页可能出现在多个进程的 RSS 中，因此分组总量不能代替系统已用内存，也不表示可回收内存。组内实例数是进程数，不是任务数或窗口数。
 
 ## 输出契约
 

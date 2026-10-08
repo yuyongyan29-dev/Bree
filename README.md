@@ -128,6 +128,8 @@ JSON keeps `schema_version: 2`. Metrics contain `value`, `status`, and `reason`;
 ## Known limitations
 
 - Bree is read-only: it does not quit applications or save data, and has no background service.
+- Memory readings from different tools are not atomic. Process RSS and system used memory use different accounting; see [Cross-checking the numbers](docs/cli.md#cross-checking-the-numbers) for timing, unit conversion, and validation limits.
+- Application attribution requires a verified Regular main application and executable paths inside its bundle. External extensions and shared services may remain unattributed. Group instance counts are not task counts, and group RSS totals are not reclaimable memory.
 - Releases are unsigned by Developer ID and unnotarized; the binary has only an ad-hoc signature. Installation under a clean user account remains unverified.
 - Official support is limited to macOS 27 on Apple Silicon, tested on the maintainer's Mac. Other macOS versions are untested on a maintainer machine and unsupported; macOS 15 CI results are reference evidence only. Intel is unsupported and rejected by the curl installer; Homebrew bottles are provided only for macOS 27.
 - `inspect <pid>` does not detect PID reuse between commands. Use a full process ID to bind inspection to the sampled instance.

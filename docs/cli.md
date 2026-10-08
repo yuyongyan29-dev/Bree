@@ -82,6 +82,8 @@ The first CPU sample establishes a baseline. Later samples use actual elapsed ti
 
 Application grouping uses evidence such as the main application and installation location inside a bundle. Only ordinary applications (AppKit activation policy Regular, usually shown in the Dock) can lead a group. Helper applications nested inside a main application's bundle join that application. Standalone menu-bar, background, and ownership-conflict processes remain unattributed. They are grouped by executable path and UID, or by process name and UID when the path is unreadable. Different UIDs never merge; an unreadable UID leaves a separate instance. Each process belongs to exactly one group; aggregation does not establish application ownership.
 
+System WebKit/AutoFill processes, extensions outside the application bundle, MCP runtimes, and Codex installed under a VS Code extension directory may remain unattributed. Grouping by executable path and UID does not prove shared task ownership. Finder is currently classified as system because its installation is under `/System/Library/CoreServices`.
+
 <a id="development-labels"></a>
 
 ### AI and developer-tool labels
@@ -108,6 +110,14 @@ Unattributed groups prefer reliable developer-tool labels. Native Claude Code na
 | `processes[].memory_bytes` | `libproc PROC_PIDTASKINFO.pti_resident_size`, RSS bytes |
 | `processes[].cpu_one_core_percent` | User + system Mach ticks from `PROC_PIDTASKINFO`, converted with `mach_timebase_info`; the CPU-time delta for the same instance divided by actual monotonic elapsed time, multiplied by 100. The first sample only establishes a baseline |
 | `groups[].memory_bytes` | Sum of RSS for distinct member instances. A single member retains its validity and reason; missing values or overflow in a multi-member sum make the total unknown |
+
+### Cross-checking the numbers
+
+To cross-check system used memory, map `vm_stat`'s `Anonymous pages`, `Pages purgeable`, `Pages wired down`, and `Pages occupied by compressor` to internal, purgeable, wired, and compressor. Recompute `(max(internal - purgeable, 0) + wired + compressor) × page_size`, using the page size reported by `vm_stat`. `Pages occupied by compressor` measures actual compressed storage; `Pages stored in compressor` counts pages before compression and must not replace it.
+
+Bree and other tools do not read at the same instant. Read `vm_stat` before and after Bree to compare against a range. The development script [accuracy-check.py](../scripts/accuracy-check.py) uses three readings: before, concurrently with, and after each round. For used memory, it extends the observed range on each side by the larger of 1% of the concurrent reference or 64 MiB, and also records the ordinary difference from that reference. This is a local validation budget, not a product accuracy guarantee; discrete readings can miss changes between them. Comparing with Activity Monitor is a separate manual check that must account for refresh timing, units, and display rounding.
+
+Compare process RSS with `ps` RSS after converting KiB to bytes by multiplying by 1024. Active, newly started, or exiting processes may differ between reads; matching only by PID cannot rule out PID reuse between tools. Unreadable metrics remain `null` with their status and reason, not zero. Shared pages may appear in several processes' RSS, so group totals do not replace system used memory or indicate reclaimable memory. Group instance counts are process counts, not tasks or windows.
 
 ## Output contract
 
