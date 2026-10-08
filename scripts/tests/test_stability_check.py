@@ -1,3 +1,4 @@
+import fcntl
 import importlib.util
 import json
 import os
@@ -15,6 +16,56 @@ SPEC.loader.exec_module(STABILITY)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_main_holds_shared_lock_for_all_checks_and_releases_on_build_failure(self):
+        for fail_build in (False, True):
+            with self.subTest(fail_build=fail_build), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory).resolve()
+                output = root / ".artifacts" / "run"
+                lock = root / "native.lock"
+                lock.write_text("preserved")
+                inode = lock.stat().st_ino
+                binary = root / "target" / "release" / "bree"
+                binary.parent.mkdir(parents=True)
+                binary.write_bytes(b"fake build")
+                commands = {}
+
+                def run(name, command, destination, env, timeout, lock_fd):
+                    self.assertIsNotNone(lock_fd, name)
+                    self.assertEqual(os.fstat(lock_fd).st_ino, inode)
+                    with lock.open("r+") as contender:
+                        with self.assertRaises(BlockingIOError, msg=name):
+                            fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    commands[name] = command
+                    (destination / (name + ".log")).write_text("{}")
+                    (destination / (name + ".json")).write_text("{}")
+                    failed = fail_build and name == "build"
+                    return {"status": "failed" if failed else "passed",
+                            "exit_code": 1 if failed else 0, "owned_group_reaped": True}
+
+                with patch.object(STABILITY, "ROOT", root), \
+                        patch.object(STABILITY, "capture", return_value={"exit_code": 0}), \
+                        patch.object(STABILITY, "source_manifest", return_value={"sha256": "fixed"}), \
+                        patch.object(STABILITY, "digest", return_value="fixed"), \
+                        patch.object(STABILITY.platform, "platform", return_value="test"), \
+                        patch.object(STABILITY.subprocess, "check_output", return_value=b""), \
+                        patch.object(STABILITY, "run_command", side_effect=run), \
+                        patch.dict(os.environ, {"HOME": str(root / "caller-home"),
+                                                "TERM": "dumb", "COLORTERM": "", "NO_COLOR": "1"}), \
+                        patch.object(sys, "argv", ["stability-check.py", "--lock", str(lock),
+                                                   "--output", str(output)]):
+                    self.assertEqual(STABILITY.main(), 1 if fail_build else 0)
+                expected = {"fmt", "clippy", "script-tests", "build"} if fail_build else set(STABILITY.CHECKS) - {"visual"}
+                self.assertEqual(set(commands), expected)
+                if not fail_build:
+                    self.assertIn("--no-fail-fast", commands["rust-tests"])
+                with lock.open("r+") as contender:
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.assertEqual(lock.stat().st_ino, inode)
+                self.assertEqual(lock.read_text(), "preserved")
+                report = json.loads((output / "summary.json").read_text())
+                self.assertEqual(report["lock_events"][-1]["event"], "lock_released")
+                self.assertEqual(report["overall_status"], "failed" if fail_build else "passed")
+
     def test_cancel_during_spawn_is_forwarded_without_full_timeout(self):
         handlers = {}
         child = MagicMock(pid=12345, returncode=-15)

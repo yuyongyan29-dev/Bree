@@ -69,7 +69,7 @@ python3 scripts/stability-check.py \
   --output "$PWD/.artifacts/stability/run-001"
 ```
 
-入口重新构建 release，运行现有 benchmark、终端、主题、信号检查，以及 Home／资源页长测；它在实测期间持有排他锁，直到本次子进程回收。Home 静置 5 分钟，显式进入 TUI 资源页与独立 watch 各观察 10 分钟。结果汇总保留源码清单、二进制 SHA、命令、退出码和原始日志，分别标记 failed、not-run 与 unknown；原始日志可能包含本机应用名称，不能提交。不要与构建、其他性能采样或原生 UI 实验同时运行测量。
+入口重新构建 release，运行现有 benchmark、终端、主题、信号检查，以及 Home／资源页长测；它在构建、测试和实测全程持有排他锁，直到本次子进程回收。Home 静置 5 分钟，显式进入 TUI 资源页与独立 watch 各观察 10 分钟。结果汇总保留源码清单、二进制 SHA、命令、退出码和原始日志，分别标记 failed、not-run 与 unknown；原始日志可能包含本机应用名称，不能提交。不要与构建、其他性能采样或原生 UI 实验同时运行测量。
 
 脚本的独立回归检查为 `python3 -m unittest discover -s scripts/tests`，CI 也运行此命令；测试使用模拟子进程和临时目录，不依赖预构建的 `target/release/bree`、开发者终端配置或真实用户数据。PTY 检查不能替代真实终端的明暗主题、字体、小窗口与缩放视觉检查；统一入口将这项标为 not-run，另行记录实际检查。单机数据只证明当前构建在该系统上的观察结果，不能扩大发行支持范围。
 

@@ -283,21 +283,23 @@ def main():
 
     try:
         save()
-        check("fmt", ["cargo", "fmt", "--check"], 300)
-        check("clippy", ["cargo", "clippy", "--locked", "--all-targets", "--", "-D", "warnings"], 900)
-        check("script-tests", [sys.executable, "-m", "unittest", "discover", "-s", "scripts/tests", "-v"], 300)
-        if not check("build", ["cargo", "build", "--locked", "--release"], 900):
-            return 1
-        report["binary"] = {"path": str(binary), "sha256": digest(binary),
-                            "bytes": binary.stat().st_size, "version": capture([str(binary), "--version"], env=env)}
-        if source_manifest()["sha256"] != manifest["sha256"]:
-            report["build_consistency"] = "failed: source changed during checks/build"
-            return 1
-        report["build_consistency"] = "passed"
-        save()
         with experiment_lock(args.lock, report["lock_events"]) as lock_fd:
+            # Build/test subprocesses can disturb another checkout's measurements
+            # just as much as live probes. Keep one lock through every owned group.
             save()
-            check("rust-tests", ["cargo", "test", "--locked"], 900, lock_fd)
+            check("fmt", ["cargo", "fmt", "--check"], 300, lock_fd)
+            check("clippy", ["cargo", "clippy", "--locked", "--all-targets", "--", "-D", "warnings"], 900, lock_fd)
+            check("script-tests", [sys.executable, "-m", "unittest", "discover", "-s", "scripts/tests", "-v"], 300, lock_fd)
+            if not check("build", ["cargo", "build", "--locked", "--release"], 900, lock_fd):
+                return 1
+            report["binary"] = {"path": str(binary), "sha256": digest(binary),
+                                "bytes": binary.stat().st_size, "version": capture([str(binary), "--version"], env=env)}
+            if source_manifest()["sha256"] != manifest["sha256"]:
+                report["build_consistency"] = "failed: source changed during checks/build"
+                return 1
+            report["build_consistency"] = "passed"
+            save()
+            check("rust-tests", ["cargo", "test", "--locked", "--no-fail-fast"], 900, lock_fd)
             doctor_path = output / "doctor.json"
             check("doctor", [str(binary), "doctor", "--json"], 30, lock_fd)
             if (output / "doctor.log").exists():
@@ -317,9 +319,9 @@ def main():
                 check(name, [sys.executable, str(ROOT / "scripts" / script),
                              "--binary", str(binary), "--output", str(result_path)] + extras,
                       timeout, lock_fd, result_path)
-        report["checks"]["visual"] = {"status": "not-run", "reason": "requires separate physical terminal inspection"}
-        report["source_unchanged_after_checks"] = source_manifest()["sha256"] == manifest["sha256"]
-        report["binary_unchanged_after_checks"] = digest(binary) == report["binary"]["sha256"]
+            report["checks"]["visual"] = {"status": "not-run", "reason": "requires separate physical terminal inspection"}
+            report["source_unchanged_after_checks"] = source_manifest()["sha256"] == manifest["sha256"]
+            report["binary_unchanged_after_checks"] = digest(binary) == report["binary"]["sha256"]
         return 0 if automated_success(report, args.skip) else 1
     except KeyboardInterrupt:
         report["orchestration_error"] = "cancelled after owned subprocess recovery"
