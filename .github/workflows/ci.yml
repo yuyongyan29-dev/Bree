@@ -30,6 +30,8 @@ jobs:
           cargo clippy --locked --all-targets -- -D warnings
       - name: Rust behavior tests
         run: cargo test --locked
+      - name: Script regression tests
+        run: python3 -m unittest discover -s scripts/tests
       - name: Installer tests
         run: |
           sh -n distribution/install.sh distribution/package.sh
