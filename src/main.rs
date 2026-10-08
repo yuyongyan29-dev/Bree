@@ -14,7 +14,7 @@ use bree_cli::{
 use clap::{Parser, Subcommand};
 use serde_json::json;
 use std::{
-    io::{self, IsTerminal},
+    io::{self, IsTerminal, Write},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -137,7 +137,7 @@ fn main() {
                 &json!({"schema_version":SCHEMA_VERSION,"error":{"code":"invalid_arguments","message":message}}),
             );
         }
-        eprintln!("bree: {message}");
+        let _ = writeln!(io::stderr(), "bree: {message}");
         std::process::exit(2);
     }
     let interactive = cli.command.is_none()
@@ -178,7 +178,10 @@ fn main() {
             }
         })
     {
-        eprintln!("bree: Cannot register the cancellation handler: {error}");
+        let _ = writeln!(
+            io::stderr(),
+            "bree: Cannot register the cancellation handler: {error}"
+        );
         std::process::exit(1);
     }
     let result = execute(cli.command, tty, &cancelled, &action_active);
@@ -203,7 +206,13 @@ fn main() {
                     &json!({"schema_version":SCHEMA_VERSION,"error":{"code":if was_cancelled {"cancelled"} else {"runtime_error"},"message":bree_cli::model::safe_text(&message)}}),
                 );
             }
-            eprintln!("bree: {}", bree_cli::model::safe_text(&message));
+            // A terminal disconnect can also make stderr unwritable. Preserve the
+            // command's error code instead of panicking while reporting its error.
+            let _ = writeln!(
+                io::stderr(),
+                "bree: {}",
+                bree_cli::model::safe_text(&message)
+            );
             if was_cancelled { 130 } else { 1 }
         }
     };

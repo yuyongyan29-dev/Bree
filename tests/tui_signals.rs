@@ -68,6 +68,17 @@ impl PtyChild {
         let mut command = Command::new(env!("CARGO_BIN_EXE_bree"));
         command
             .env("TERM", "xterm-256color")
+            .env("COLORTERM", "truecolor")
+            .env_remove("NO_COLOR")
+            .env_remove("COLORFGBG")
+            // Viewing and signal fixtures must not even read the user's rules.
+            // Store observations do not create this absent private directory.
+            .env(
+                "BREE_DATA_DIR",
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join(".artifacts/p5")
+                    .join(format!("signal-test-data-{}", std::process::id())),
+            )
             .stdin(Stdio::from(slave.try_clone().unwrap()))
             .stdout(Stdio::from(slave.try_clone().unwrap()))
             .stderr(Stdio::from(slave.try_clone().unwrap()));
@@ -85,6 +96,9 @@ impl PtyChild {
         // The desktop wordmark is drawn with block cells rather than literal text.
         // Wait for a stable home entry, which is also present before sampling finishes.
         // Ratatui can encode intervening blank cells as cursor movements.
+        // run_internal installs ctrlc before entering raw mode and drawing this
+        // frame. Readiness is therefore an upper bound for handler installation;
+        // a fixed delay after spawn does not establish that the handler exists.
         self.drain_until(b"Clean");
     }
 
@@ -208,6 +222,71 @@ impl Drop for PtyChild {
             // Failure cleanup only; this PID was created above and is never a user target.
             let _ = self.child.kill();
             let _ = self.child.wait();
+        }
+    }
+}
+
+#[test]
+fn external_sigint_after_home_frame_restores_the_terminal() {
+    // Exercise SIGINT itself, distinct from a raw Ctrl+C key event. Bound repeated
+    // startup/teardown checks, and send only after the handler ordering is proven
+    // by an observed first frame rather than relying on a scheduler-dependent sleep.
+    for _ in 0..6 {
+        let mut session = PtyChild::new(28, 100);
+        session.drain_until_started();
+        let mut modes: libc::termios = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { libc::tcgetattr(session.slave.as_ref().unwrap().as_raw_fd(), &mut modes) },
+            0
+        );
+        assert_eq!(modes.c_lflag & (libc::ICANON | libc::ECHO | libc::ISIG), 0);
+        assert_eq!(
+            unsafe { libc::kill(session.child.id() as i32, libc::SIGINT) },
+            0
+        );
+        assert_eq!(
+            session.exit_while_draining(Duration::from_secs(2)).code(),
+            Some(130)
+        );
+        session.assert_modes_and_flags_restored();
+    }
+}
+
+#[test]
+fn terminal_hangup_during_initialization_is_an_error_or_signal_exit_not_a_panic() {
+    for _ in 0..6 {
+        let mut session = PtyChild::new(28, 100);
+        session.drain_until_started();
+        // The first skeleton can still be flushing or followed by another draw.
+        // Closing the output here may therefore return a runtime I/O error before
+        // a HUP can be delivered. A disconnected stderr must not turn it into 101.
+        drop(session.master.take());
+        let deadline = Instant::now() + Duration::from_millis(150);
+        let status = loop {
+            if let Some(status) = session.child.try_wait().unwrap() {
+                break Some(status);
+            }
+            if Instant::now() >= deadline {
+                break None;
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        if let Some(status) = status {
+            assert_eq!(
+                status.code(),
+                Some(1),
+                "terminal loss before HUP is an I/O error"
+            );
+        } else {
+            assert_eq!(
+                unsafe { libc::kill(session.child.id() as i32, libc::SIGHUP) },
+                0
+            );
+            let code = session.exit_within(Duration::from_secs(2)).code();
+            assert!(
+                matches!(code, Some(1 | 130)),
+                "terminal I/O may finish between the poll and HUP; actual code: {code:?}"
+            );
         }
     }
 }

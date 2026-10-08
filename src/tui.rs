@@ -1223,20 +1223,32 @@ fn run_internal(watch: bool, interval: Duration, clean: bool) -> Result<bool, St
     app.start_cleanup_after_sample = clean;
     app.refresh_interval = interval.max(Duration::from_millis(100));
     // Show the skeleton before native initialization or process enumeration.
-    terminal
-        .draw(|frame| render(frame, &mut app))
-        .map_err(|error| error.to_string())?;
     let mut worker = None;
     let refresh_interval = app.refresh_interval;
-    let result = run_loop(&mut terminal, &mut app, &mut worker, refresh_interval);
+    // Include the first frame in the explicit teardown path: the terminal can
+    // disappear while that skeleton is still flushing.
+    let first_frame = terminal
+        .draw(|frame| render(frame, &mut app))
+        .map(|_| ())
+        .map_err(|error| format!("Terminal draw failed: {error}"));
+    let result =
+        first_frame.and_then(|_| run_loop(&mut terminal, &mut app, &mut worker, refresh_interval));
     // Restore the terminal before waiting for an in-flight, read-only snapshot to finish.
-    drop(terminal);
+    // ratatui-core 0.1.2's Terminal::drop uses eprintln! if cursor restoration
+    // fails. When both output and stderr are the disconnected PTY, that diagnostic
+    // panics. Contain only dependency teardown so the guard and worker still drop,
+    // and retain the original I/O error when one was already observed.
+    let teardown = panic::catch_unwind(panic::AssertUnwindSafe(|| drop(terminal)));
     drop(guard);
     // An event/draw error also stops queued actions. Restore the terminal first;
     // then durably classify any sent, unverified request without sending more.
     app.cancel_cleanup();
     drop(worker);
-    result
+    if teardown.is_err() && result.is_ok() {
+        Err("Terminal cursor restoration failed after output disconnected.".into())
+    } else {
+        result
+    }
 }
 
 fn run_loop(
