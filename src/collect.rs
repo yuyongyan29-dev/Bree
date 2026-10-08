@@ -70,12 +70,6 @@ impl Collector {
         }
         let (raw_processes, mut diagnostics) = self.platform.processes()?;
         let apps = main_applications(self.platform.applications(), &raw_processes);
-        let ancestors = hosting_ancestors(&raw_processes, std::process::id());
-        let hosting_bundles: HashSet<String> = raw_processes
-            .iter()
-            .filter(|p| ancestors.contains(&p.identity.pid))
-            .filter_map(|p| attribute(p, &apps).application.map(|a| a.bundle_path))
-            .collect();
         let mut next_baselines = HashMap::with_capacity(raw_processes.len());
         let mut processes: Vec<ProcessInfo> = raw_processes
             .into_iter()
@@ -99,38 +93,7 @@ impl Collector {
                         "Identity or cumulative CPU time is unreadable",
                     ),
                 };
-                let (category, system_object) = classify_process(&p, &attribution);
-                let mut protection_reasons = vec!["Read-only Alpha: termination capability is not enabled".into()];
-                if p.identity.pid == std::process::id() {
-                    protection_reasons.push("Bree itself".into());
-                }
-                if ancestors.contains(&p.identity.pid)
-                    || attribution
-                        .application
-                        .as_ref()
-                        .is_some_and(|a| hosting_bundles.contains(&a.bundle_path))
-                {
-                    protection_reasons.push("The terminal or session hosting this Bree instance".into());
-                }
-                if p.uid.is_some_and(|uid| uid != self.platform.current_uid()) {
-                    protection_reasons.push("Another user or a system account".into());
-                }
-                if p.uid.is_none() {
-                    protection_reasons.push("User identity cannot be read reliably".into());
-                }
-                if system_object {
-                    protection_reasons.push("System object".into());
-                }
-                if p.identity.status != Validity::Ok {
-                    protection_reasons.push("Instance identity cannot be read reliably".into());
-                }
-                if attribution
-                    .application
-                    .as_ref()
-                    .is_some_and(|a| a.frontmost)
-                {
-                    protection_reasons.push("In the foreground at sampling time (observation only, not an execution basis)".into());
-                }
+                let (category, _) = classify_process(&p, &attribution);
                 ProcessInfo {
                     id,
                     identity: p.identity,
@@ -143,8 +106,6 @@ impl Collector {
                     cpu_one_core_percent: cpu,
                     category,
                     attribution,
-                    protection_reasons,
-                    quit_supported: false,
                 }
             })
             .collect();
@@ -234,22 +195,6 @@ fn main_applications(apps: Vec<AppEvidence>, processes: &[RawProcess]) -> Vec<Ap
                 && processes.iter().any(|p| p.identity == app.leader_identity)
         })
         .collect()
-}
-
-fn hosting_ancestors(processes: &[RawProcess], own_pid: u32) -> HashSet<u32> {
-    let parents: HashMap<u32, Option<u32>> = processes
-        .iter()
-        .map(|p| (p.identity.pid, p.parent_pid))
-        .collect();
-    let mut result = HashSet::new();
-    let mut current = own_pid;
-    while result.insert(current) {
-        match parents.get(&current).copied().flatten() {
-            Some(parent) if parent > 0 && parent != current => current = parent,
-            _ => break,
-        }
-    }
-    result
 }
 
 fn is_system_executable(path: &str) -> bool {
@@ -462,8 +407,6 @@ mod tests {
             cpu_one_core_percent: Metric::unavailable(Validity::Unknown, "test", "baseline"),
             category: Category::Application,
             attribution,
-            protection_reasons: vec![],
-            quit_supported: false,
         }
     }
 
@@ -674,19 +617,6 @@ mod tests {
             cpu_between(Some((0, now)), 1, now + Duration::from_secs(30))
                 .value
                 .is_none()
-        );
-    }
-    #[test]
-    fn hosting_ancestry_stops_at_cycles_and_does_not_attribute_children() {
-        let mut a = raw(10, None);
-        a.parent_pid = Some(11);
-        let mut b = raw(11, None);
-        b.parent_pid = Some(10);
-        let mut child = raw(12, None);
-        child.parent_pid = Some(10);
-        assert_eq!(
-            hosting_ancestors(&[a, b, child], 10),
-            HashSet::from([10, 11])
         );
     }
 }

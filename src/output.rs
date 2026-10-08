@@ -61,7 +61,7 @@ pub fn write_text(value: &str) -> Result<(), String> {
 pub fn status_text(snapshot: &Snapshot) -> String {
     let memory = &snapshot.system;
     format!(
-        "bree · Read-only Alpha\nMemory pressure: {}\nUsed {} / Total {}\nCompressed {} · Swap {}\nSampled at: {} Unix ms · Collection {} ms\nCoverage: {} enumerated, {} readable memory, {} reliable identities\nDefinition: {}\nCleanup is not enabled. App-group totals do not equal reclaimable memory.",
+        "bree · Read-only Alpha\nMemory pressure: {}\nUsed {} / Total {}\nCompressed {} · Swap {}\nSampled at: {} Unix ms · Collection {} ms\nCoverage: {} enumerated, {} readable memory, {} reliable identities\nDefinition: {}\nApp-group totals do not equal reclaimable memory.",
         pressure_text(&memory.pressure),
         metric_bytes(&memory.used_bytes),
         metric_bytes(&memory.total_bytes),
@@ -154,7 +154,7 @@ pub fn inspect_text(snapshot: &Snapshot, id: &str) -> Result<String, String> {
     };
     let mut result = format!("Sampled at: {} Unix ms\n", snapshot.sampled_at_unix_ms);
     for process in snapshot.processes.iter().filter(|p| ids.contains(&p.id)) {
-        result.push_str(&format!("\n{} · PID {}\nObject ID: {}\nMemory: {} ({})\nCPU: {}\nIdentity: {:?}, started {}.{}\nPath: {}\nAttribution: {} / {}\nEvidence: {}\nProtection: {}\nAvailable actions: read-only; termination is not enabled in Alpha.\n",
+        result.push_str(&format!("\n{} · PID {}\nObject ID: {}\nMemory: {} ({})\nCPU: {}\nIdentity: {:?}, started {}.{}\nPath: {}\nAttribution: {} / {}\nEvidence: {}\n",
             safe_text(&process.name), process.identity.pid, safe_text(&process.id),
             metric_bytes(&process.memory_bytes), safe_text(&process.metric_kind),
             process.cpu_one_core_percent.value.filter(|_| process.cpu_one_core_percent.status == Validity::Ok)
@@ -163,7 +163,7 @@ pub fn inspect_text(snapshot: &Snapshot, id: &str) -> Result<String, String> {
             process.identity.start_microseconds.map(|v| format!("{v:06}")).unwrap_or_else(|| "Unknown".into()),
             process.executable_path.as_deref().map(safe_text).unwrap_or_else(|| "— / Unreadable".into()),
             safe_text(&process.attribution.method), safe_text(&process.attribution.confidence),
-            safe_text(&process.attribution.explanation), safe_text(&process.protection_reasons.join("; "))));
+            safe_text(&process.attribution.explanation)));
     }
     Ok(result)
 }

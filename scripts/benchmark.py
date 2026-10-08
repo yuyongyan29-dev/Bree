@@ -40,7 +40,7 @@ with empty_bree_environment(args.output) as env:
     timed = subprocess.run(["/usr/bin/time", "-l", str(binary), "watch", "--json", "--count", "5", "--interval", "2"], capture_output=True, check=True, env=env)
 match = re.search(rb"(\d+)\s+maximum resident set size", timed.stderr)
 report = {
-    "data_dir": env["BREE_DATA_DIR"],
+    "home_dir": env["HOME"],
     "system": platform.platform(), "architecture": platform.machine(),
     "binary": str(binary), "binary_bytes": binary.stat().st_size,
     "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),

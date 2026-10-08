@@ -96,7 +96,7 @@ curl -fsSL https://raw.githubusercontent.com/yuyongyan29-dev/Bree/main/distribut
 rm "$HOME/.local/bin/bree"
 ```
 
-Homebrew 与 curl 都保留本地规则和记录，默认位于 `~/Library/Application Support/Bree`。普通查看不会创建这些文件，首次保存规则／预演才初始化数据目录。
+Bree 的只读查看器不保存数据。0.3 及更早版本留下的 `~/Library/Application Support/Bree` 可以手动删除；程序和卸载流程不会自动删除或迁移旧目录。
 
 ## 检查安装
 

@@ -77,7 +77,6 @@ impl ReadError {
 pub(crate) struct Backend {
     boot_session: String,
     boot_valid: bool,
-    uid: u32,
     total_memory: Metric<u64>,
     page_size: Option<u64>,
     cpu_timebase: Option<(u32, u32)>,
@@ -115,20 +114,15 @@ impl Backend {
         Ok(Self {
             boot_session,
             boot_valid,
-            uid: unsafe { libc::geteuid() },
             total_memory,
             page_size,
             cpu_timebase,
             initialization_note: if MAIN_INITIALIZED.load(Ordering::Acquire) {
                 None
             } else {
-                Some("AppKit was not initialized on the main thread; dynamic app information may lag, and all actions are disabled.".into())
+                Some("AppKit was not initialized on the main thread; dynamic app information may lag.".into())
             },
         })
-    }
-
-    pub fn current_uid(&self) -> u32 {
-        self.uid
     }
 
     pub fn system_memory(&self) -> SystemMemory {

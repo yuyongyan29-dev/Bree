@@ -2,7 +2,7 @@
 
 [English](CONTRIBUTING.md) · [中文](CONTRIBUTING.zh-CN.md)
 
-Contributions are welcome: report problems, improve documentation, submit fixes, or discuss features. Bree is a free macOS CLI for local memory inspection and explanation. Its terminal interface and direct commands share collection, rule, and preview logic.
+Contributions are welcome: report problems, improve documentation, submit fixes, or discuss features. Bree is a free macOS CLI for local memory inspection and explanation. It has no persistent state. Its terminal interface and direct commands share collection, query, and output logic.
 
 ## Reporting problems
 
@@ -34,7 +34,7 @@ The toolchain is pinned in `rust-toolchain.toml` and dependencies in `Cargo.lock
 
 | Directory | Contents |
 |---|---|
-| `src/` | CLI, TUI, collection, policy, storage, and previews |
+| `src/` | CLI, TUI, collection, queries, and output |
 | `src/platform/` | macOS adapters and capability information for other platforms |
 | `tests/` | Command behavior, live collection, and terminal tests |
 | `scripts/` | Performance and terminal verification |
@@ -59,11 +59,7 @@ python3 distribution/tests/test_release.py
 
 Record the checks you actually ran and their results. Installer and release tooling tests use simulated downloads, builds, signing tools, and notarization responses; they do not access remote servers, real keychains, or user configuration. A mock Accepted response is not evidence of notarization.
 
-Use an isolated data directory for manual checks that write state:
-
-```sh
-BREE_DATA_DIR="$PWD/.artifacts/dev-data" ./target/release/bree
-```
+For no-write checks, run the commands with an empty temporary `HOME` and verify that it stays empty. Tests that launch Bree must use their own temporary `HOME` and explicitly set terminal color variables rather than inheriting developer settings.
 
 The stability runner provides a single entry point for read-only stability and performance checks. `--lock` must be an absolute path shared by all concurrent worktrees, and its parent directory must already exist. Do not create a separate lock for each worktree or delete the lock file. `--output` must be a new directory under this worktree's `target/` or `.artifacts/` to preserve existing evidence.
 
@@ -117,8 +113,8 @@ Packaging, notarization submission, publishing a GitHub Release, updating the ta
 ## Behavior contracts
 
 - Keep missing metrics as `null` with a reason; do not substitute zero. Use a consistent process memory metric and do not count groups twice.
-- Object IDs describe the current instance for inspection; they are not stopping credentials that can be reused across launches. Protect rules take priority over allow rules.
-- Bree does not stop applications. Rules and previews do not enable quitting, force quitting, or background cleanup.
+- Object IDs describe the current instance for inspection; they are not stopping credentials that can be reused across launches.
+- Bree is a read-only viewer with no persistent state. It does not stop applications, run background cleanup, or delete data left by older versions.
 - JSON stdout contains only results; diagnostics go to stderr. Preserve the declared schemas and validity fields.
 
 See the [user guide](docs/cli.md) for metric definitions and capability scope.

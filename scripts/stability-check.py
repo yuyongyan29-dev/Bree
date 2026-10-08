@@ -216,9 +216,9 @@ def main():
     output.chmod(0o700)
     temporary = output / "temporary"
     temporary.mkdir(mode=0o700)
-    # Theme checks and Rust tests create their own private stores under TMPDIR.
-    # Keep those stores inside this run as well as the explicit BREE_DATA_DIR.
-    env = bree_environment(output / "empty-data")
+    # Theme checks and Rust tests create their own private homes under TMPDIR.
+    # Keep those homes inside this run as well as the explicit HOME.
+    env = bree_environment(output / "empty-home")
     env["TMPDIR"] = str(temporary)
     binary = ROOT / "target/release/bree"
     manifest = source_manifest()
@@ -227,7 +227,7 @@ def main():
     (output / "worktree.patch").write_bytes(diff)
     report = {
         "schema_version": 1, "started_utc": utc_now(), "workspace": str(ROOT),
-        "data_dir": env["BREE_DATA_DIR"], "temporary_dir": env["TMPDIR"],
+        "home_dir": env["HOME"], "temporary_dir": env["TMPDIR"],
         "commit": capture(["git", "rev-parse", "HEAD"]),
         "branch": capture(["git", "branch", "--show-current"]),
         "worktree_status": capture(["git", "status", "--short"]),
@@ -261,7 +261,14 @@ def main():
             save()
             return False
         print(f"{name}: started", flush=True)
-        record = run_command(name, command, output, env, timeout, lock_fd)
+        # Cargo needs the caller's toolchain/configuration; only Bree gets an isolated HOME.
+        command_env = dict(env)
+        if command[0] == "cargo":
+            if "HOME" in os.environ:
+                command_env["HOME"] = os.environ["HOME"]
+            else:
+                command_env.pop("HOME", None)
+        record = run_command(name, command, output, command_env, timeout, lock_fd)
         record["source_manifest_sha256"] = manifest["sha256"]
         if "binary" in report:
             record["binary_sha256"] = report["binary"]["sha256"]

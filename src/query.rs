@@ -1,4 +1,4 @@
-//! Read-only display queries. A match never changes grouping, policy or identity.
+//! Read-only display queries. A match never changes grouping or identity.
 use crate::model::{OccupancyGroup, Snapshot, Validity, safe_text};
 use clap::ValueEnum;
 use serde::Serialize;
@@ -153,8 +153,6 @@ mod tests {
                     confidence: "fixture".into(),
                     explanation: "secret-attribution".into(),
                 },
-                protection_reasons: vec![],
-                quit_supported: false,
             }],
             groups: vec![group("app:original", "Browser", 1)],
             coverage: Coverage {

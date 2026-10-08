@@ -71,13 +71,11 @@ impl PtyChild {
             .env("COLORTERM", "truecolor")
             .env_remove("NO_COLOR")
             .env_remove("COLORFGBG")
-            // Viewing and signal fixtures must not even read the user's rules.
-            // Store observations do not create this absent private directory.
             .env(
-                "BREE_DATA_DIR",
+                "HOME",
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join(".artifacts/stability")
-                    .join(format!("signal-test-data-{}", std::process::id())),
+                    .join(format!("signal-test-home-{}", std::process::id())),
             )
             .stdin(Stdio::from(slave.try_clone().unwrap()))
             .stdout(Stdio::from(slave.try_clone().unwrap()))
@@ -99,7 +97,7 @@ impl PtyChild {
         // run_internal installs ctrlc before entering raw mode and drawing this
         // frame. Readiness is therefore an upper bound for handler installation;
         // a fixed delay after spawn does not establish that the handler exists.
-        self.drain_until(b"Preview");
+        self.drain_until(b"1. Memory");
     }
 
     fn drain_until(&mut self, marker: &[u8]) {

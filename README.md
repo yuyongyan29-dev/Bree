@@ -26,7 +26,9 @@
 
 Bree brings system memory pressure, application usage, and process details into a terminal interface you can navigate with your keyboard. Find what is using memory, inspect the evidence behind each application's grouping and metrics, or follow changes with direct commands and JSON output.
 
-**Current version: `0.3.0-alpha.7`. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. Bree does not stop applications. Rules and previews explain how each application is classified; `clean --dry-run` records a preview without taking action.**
+**Bree is a read-only viewer with no persistent state. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. The package version remains `0.3.0-alpha.7`.**
+
+This source tree includes the breaking changes planned for 0.4: `clean` and `history` are removed, and JSON uses schema 2. Installation releases have not changed. Bree does not read, migrate, or delete data left by earlier 0.3 or older builds; you may manually remove `~/Library/Application Support/Bree` if no longer needed.
 
 <!-- screenshot: TUI Home and Resources -->
 
@@ -72,7 +74,6 @@ See the [installation guide](docs/installation.md) for updates, uninstalling, cu
 | Which application or process is using memory? | Application groups supported by evidence, process details, and search by name, bundle ID, or PID |
 | Which AI or developer tool does a process belong to? | Labels for ChatGPT.app's bundled Codex CLI and native Claude Code, matched by [documented executable layouts](docs/cli.md#development-labels) without a pinned version; labels explain installation source, not task completion or whether memory can be safely reclaimed |
 | Is usage still changing? | Foreground monitoring and text, JSON, or JSONL output |
-| Why is an item protected or skipped? | Allow and protect rules, classification reasons, and read-only previews |
 
 Missing or inaccessible data is explicitly marked instead of being reported as zero.
 
@@ -90,15 +91,14 @@ bree list --search Safari --sort name  # Find matching groups and sort by name
 bree inspect '<object ID>'    # Inspect an ID returned by list
 bree watch                   # Monitor in the foreground
 bree doctor                  # Check capabilities and data availability
-bree clean --dry-run --json   # Preview without taking action
 bree license                  # Display the GPL-3.0 license
 ```
 
 Lists are sorted by memory by default; use `--sort name` to sort by group name. Search ignores case and surrounding whitespace. Non-numeric queries match substrings of group names, member process names, or member bundle IDs. Purely numeric queries match only a complete PID, not name substrings or PID prefixes. It does not search paths, full command lines, or environment variables.
 
-In the **Memory** page, press **/** to edit a search, **Enter** to apply it, or **Esc** to discard edits and keep the previous search. Outside the editor, **Esc** first clears an applied search, then returns home. **Ctrl+U** clears the input and **Backspace** deletes one character. **Q** is text while editing; **Ctrl+C** always quits. Applied searches work with filters, sorting, and refresh. Search changes only the displayed list, not rules or classifications.
+In the **Memory** page, press **/** to edit a search, **Enter** to apply it, or **Esc** to discard edits and keep the previous search. Outside the editor, **Esc** first clears an applied search, then returns home. **Ctrl+U** clears the input and **Backspace** deletes one character. **Q** is text while editing; **Ctrl+C** always quits. Applied searches work with filters, sorting, and refresh. Search changes only the displayed list and preserves the underlying classifications.
 
-**Up/Down** select · **Enter** open · **R** refresh · **S** settings · **Q** quit outside search editing. The minimum interactive window size is 48 columns by 16 rows.
+Home has one entry, **1. Memory**; press **Enter** to open it. **Up/Down** select · **Enter** open details · **R** refresh · **Q** quit outside search editing. The minimum interactive window size is 48 columns by 16 rows.
 
 For scripts:
 
@@ -108,7 +108,7 @@ bree list --search Safari --sort name --json
 bree watch --json --count 3
 ```
 
-JSON includes `schema_version: 1` and data validity fields. For `list`, `groups` reflects search, sorting, and `--limit`, while `processes`, `coverage`, and `policy` retain the full sample. The `view` metadata reports `search`, `sort`, `total_groups`, `matched_groups`, and `shown_groups`. Unknown values are `null`. Results go to stdout; diagnostics go to stderr. Command options, rule scopes, and local data behavior are covered in the [user guide](docs/cli.md), currently in Chinese.
+JSON includes `schema_version: 2` and data validity fields. For `list`, `groups` reflects search, sorting, and `--limit`, while `processes` and `coverage` retain the full sample. The `view` metadata reports `search`, `sort`, `total_groups`, `matched_groups`, and `shown_groups`. Unknown values are `null`. Results go to stdout; diagnostics go to stderr. Command options, metric definitions, and the schema changes are covered in the [user guide](docs/cli.md), currently in Chinese.
 
 ## Feedback and contributions
 

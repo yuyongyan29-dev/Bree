@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -138,8 +138,24 @@ pub struct ProcessInfo {
     pub cpu_one_core_percent: Metric<f64>,
     pub category: Category,
     pub attribution: Attribution,
-    pub protection_reasons: Vec<String>,
-    pub quit_supported: bool,
+}
+
+impl ProcessInfo {
+    pub(crate) fn reliable_identity(&self) -> bool {
+        self.identity.status == Validity::Ok
+            && self.identity.pid > 1
+            && !self.identity.boot_session.is_empty()
+            && !self.identity.boot_session.chars().any(char::is_control)
+            && self
+                .identity
+                .start_seconds
+                .is_some_and(|seconds| seconds > 0)
+            && self
+                .identity
+                .start_microseconds
+                .is_some_and(|micros| micros < 1_000_000)
+            && self.id == self.identity.object_id()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -12,11 +12,11 @@ from check_env import bree_environment, empty_bree_environment
 
 class EnvironmentTests(unittest.TestCase):
     def test_explicit_fixture_replaces_inherited_store_and_terminal_settings(self):
-        caller = {"BREE_DATA_DIR": "/caller/private-store", "TERM": "dumb",
+        caller = {"HOME": "/caller/private-store", "TERM": "dumb",
                   "COLORTERM": "caller-color", "NO_COLOR": "1", "COLORFGBG": "0;15"}
         with patch.dict(os.environ, caller):
             env = bree_environment(Path("/synthetic/fixture"))
-            self.assertEqual(env["BREE_DATA_DIR"], "/synthetic/fixture")
+            self.assertEqual(env["HOME"], "/synthetic/fixture")
             self.assertEqual(env["TERM"], "xterm-256color")
             self.assertEqual(env["COLORTERM"], "truecolor")
             self.assertNotIn("NO_COLOR", env)
@@ -26,9 +26,9 @@ class EnvironmentTests(unittest.TestCase):
     def test_empty_stores_are_fresh_private_and_scoped_to_the_check(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "evidence/result.json"
-            with patch.dict(os.environ, {"BREE_DATA_DIR": "/caller/private-store"}):
+            with patch.dict(os.environ, {"HOME": "/caller/private-store"}):
                 with empty_bree_environment(output) as first, empty_bree_environment(output) as second:
-                    stores = [Path(env["BREE_DATA_DIR"]) for env in (first, second)]
+                    stores = [Path(env["HOME"]) for env in (first, second)]
                     self.assertNotEqual(*stores)
                     for store in stores:
                         self.assertTrue(store.is_absolute())

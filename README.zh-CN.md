@@ -26,7 +26,9 @@
 
 Bree 把系统内存压力、应用与进程占用放进一个键盘操作的终端界面。查看谁占用了内存，追到每个对象的归属和指标依据，也能用直接命令与 JSON 持续观察。
 
-**当前为 `0.3.0-alpha.7`：已验证原生 Apple Silicon、macOS 27.0.1，其他系统组合尚待验证。Bree 不会结束应用；规则与预演说明每个应用的分类理由，`clean --dry-run` 只记录预演。**
+**Bree 是无持久状态的只读查看器。已验证原生 Apple Silicon、macOS 27.0.1，其他系统组合尚待验证。包版本仍为 `0.3.0-alpha.7`。**
+
+当前源码已包含面向 0.4 的不兼容变更：移除 `clean`、`history`，JSON 使用 schema 2；安装入口的发行版本未变。Bree 不读取、迁移或删除此前 0.3 及更早版本留下的数据；不再需要时，可手动删除 `~/Library/Application Support/Bree`。
 
 <!-- screenshot: TUI Home and Resources -->
 
@@ -72,7 +74,6 @@ bree
 | 哪个应用或进程占用了内存？ | 按有证据的应用归属分组，查看进程详情，按名称、bundle ID 或 PID 搜索 |
 | 进程属于哪个 AI／开发工具？ | 按[已说明的可执行文件安装布局](docs/cli.md#development-labels)标注 ChatGPT.app 内置的 Codex CLI 与原生安装的 Claude Code，不锁定版本号；标签只解释安装来源，不代表任务已完成或内存可以安全回收 |
 | 占用是否还在变化？ | 前台持续观察，以及文本、JSON／JSONL 输出 |
-| 某个对象为什么被保护或跳过？ | 允许／保护规则、分类理由与只读预演 |
 
 未知或无权限的数据明确标记，不填成零。
 
@@ -90,15 +91,14 @@ bree list --search Safari --sort name  # 搜索匹配分组并按名称排序
 bree inspect '<对象 ID>'     # 使用 list 返回的 ID 查看详情
 bree watch                   # 前台持续观察
 bree doctor                  # 检查能力与数据可用性
-bree clean --dry-run --json   # 只读预演
 bree license                  # 查看 GPL-3.0 许可
 ```
 
 列表默认按内存占用排序，`--sort name` 可改为按分组名排序。查询忽略首尾空白与大小写，非纯数字查询按分组名、成员进程名或成员 bundle ID 做子串匹配；纯数字查询只按完整 PID 精确匹配，不匹配名称子串或 PID 前缀，不搜索路径、完整命令行或环境变量。
 
-在 **Memory** 页按 **/** 编辑搜索，**Enter** 提交，**Esc** 取消编辑并保留原查询。非编辑状态下，**Esc** 先清空已应用的查询，之后再按返回首页。**Ctrl+U** 清空输入，**Backspace** 逐字符删除；编辑时 **Q** 作为文本输入，**Ctrl+C** 始终退出。应用查询后仍可分类筛选、排序与刷新，搜索只改变显示列表，不改变规则或分类。
+在 **Memory** 页按 **/** 编辑搜索，**Enter** 提交，**Esc** 取消编辑并保留原查询。非编辑状态下，**Esc** 先清空已应用的查询，之后再按返回首页。**Ctrl+U** 清空输入，**Backspace** 逐字符删除；编辑时 **Q** 作为文本输入，**Ctrl+C** 始终退出。应用查询后仍可分类筛选、排序与刷新，搜索只改变显示列表，不改变原有分类。
 
-**↑↓** 选择 · **Enter** 进入 · **R** 刷新 · **S** 设置 · 非搜索编辑状态下 **Q** 退出。最小交互尺寸为 48 列 × 16 行。
+首页只有 **1. Memory** 入口，按 **Enter** 打开。**↑↓** 选择 · **Enter** 查看详情 · **R** 刷新 · 非搜索编辑状态下 **Q** 退出。最小交互尺寸为 48 列 × 16 行。
 
 需要脚本输出时：
 
@@ -108,7 +108,7 @@ bree list --search Safari --sort name --json
 bree watch --json --count 3
 ```
 
-JSON 保持 `schema_version: 1` 与数据有效性。`list` 的 `groups` 为查询、排序与 `--limit` 后的显示结果，`processes`、`coverage`、`policy` 保留完整样本；`view` 元数据含 `search`、`sort`、`total_groups`、`matched_groups` 和 `shown_groups`。未知值为 `null`；stdout 只输出结果，诊断写入 stderr。命令选项、规则范围和本地数据说明见 [完整使用说明](docs/cli.md)。
+JSON 使用 `schema_version: 2` 并保留数据有效性。`list` 的 `groups` 为查询、排序与 `--limit` 后的显示结果，`processes`、`coverage` 保留完整样本；`view` 元数据含 `search`、`sort`、`total_groups`、`matched_groups` 和 `shown_groups`。未知值为 `null`；stdout 只输出结果，诊断写入 stderr。命令选项、指标定义与 schema 变更见 [完整使用说明](docs/cli.md)。
 
 ## 反馈与贡献
 

@@ -40,7 +40,7 @@ def cpu_seconds(value):
 
 
 def page_state(text):
-    home = ("Memory pressure:" in text and "3. Memory" in text
+    home = ("Memory pressure:" in text and "1. Memory" in text
             and "Enter Open" in text)
     resources = ("bree Memory" in text and "/ Search names, Bundle ID or exact PID" in text
                  and "Esc Home" in text and "refresh" in text and not home)
@@ -115,7 +115,7 @@ class PtyRun:
         self.menu_sent = False
         self.last_state = None
         self.result = {"status": "unknown", "command": command, "requested_duration_seconds": duration,
-                       "mode": "Home menu -> 3 Enter -> Resources" if name == "resources"
+                       "mode": "Home menu -> 1 Enter -> Resources" if name == "resources"
                                else "interactive watch -> Resources" if name == "watch" else "Home idle",
                        "pid": None, "samples": [], "sample_timestamps_utc": [],
                        "terminal_output_bytes": 0, "idle_output_bytes": 0,
@@ -180,9 +180,9 @@ class PtyRun:
             self.last_state = state
         if self.name == "resources" and not self.menu_sent and usable and state["page"] == "home":
             self.event("home_verified_before_navigation", **state)
-            os.write(self.master, b"3\r")
+            os.write(self.master, b"1\r")
             self.menu_sent = True
-            self.event("keys_sent", keys="3 Enter")
+            self.event("keys_sent", keys="1 Enter")
             return
         expected = "home" if self.name == "home" else "resources"
         if self.ready is None:
@@ -300,7 +300,7 @@ def observe(args, output, env):
     binary = args.binary.resolve()
     sessions = []
     report = {"status": "unknown", "sample_interval_seconds": args.sample_interval,
-              "data_dir": env["BREE_DATA_DIR"],
+              "home_dir": env["HOME"],
               "limits": ["one live Mac; workload and caches uncontrolled",
                          "three owned Bree PTYs observed concurrently; per-PID CPU/RSS",
                          "CPU is cumulative ps CPU / actual sampled wall time, as percent of one core",

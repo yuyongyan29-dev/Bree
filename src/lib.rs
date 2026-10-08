@@ -3,8 +3,5 @@ mod brand;
 pub mod collect;
 pub mod model;
 pub mod output;
-pub mod policy;
-pub mod preview;
 pub mod query;
-pub mod storage;
 pub mod tui;

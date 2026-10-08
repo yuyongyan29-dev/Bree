@@ -1,11 +1,50 @@
 use serde_json::Value;
 use std::process::{Command, Output};
 
+struct TestHome(std::path::PathBuf);
+
+impl TestHome {
+    fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "bree-command-home-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&path).unwrap();
+        Self(path)
+    }
+
+    fn command(&self) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_bree"));
+        command
+            .env("HOME", &self.0)
+            .env("TERM", "xterm-256color")
+            .env("COLORTERM", "truecolor")
+            .env_remove("NO_COLOR")
+            .env_remove("COLORFGBG");
+        command
+    }
+
+    fn run(&self, args: &[&str]) -> Output {
+        let output = self.command().args(args).output().expect("run bree");
+        assert!(
+            std::fs::read_dir(&self.0).unwrap().next().is_none(),
+            "Bree wrote to HOME after {args:?}"
+        );
+        output
+    }
+}
+
+impl Drop for TestHome {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn bree(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_bree"))
-        .args(args)
-        .output()
-        .expect("run bree")
+    TestHome::new().run(args)
 }
 
 #[test]
@@ -20,7 +59,7 @@ fn naked_command_without_tty_never_waits_for_input() {
 #[test]
 fn all_command_help_is_in_english() {
     for subcommand in [
-        "", "status", "list", "inspect", "watch", "doctor", "clean", "license",
+        "", "status", "list", "inspect", "watch", "doctor", "license",
     ] {
         let args = if subcommand.is_empty() {
             vec!["--help"]
@@ -41,39 +80,27 @@ fn all_command_help_is_in_english() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn unmatched_list_query_keeps_full_process_coverage_and_policy_without_writing_state() {
-    let root = std::env::temp_dir().join(format!("bree-list-query-{}", std::process::id()));
-    assert!(!root.exists());
-    let output = Command::new(env!("CARGO_BIN_EXE_bree"))
-        .env("BREE_DATA_DIR", &root)
-        .args([
-            "list",
-            "--json",
-            "--search",
-            "bree-no-match-673882c5-7a63",
-            "--sort",
-            "name",
-            "--limit",
-            "1",
-        ])
-        .output()
-        .unwrap();
+fn unmatched_list_query_keeps_full_process_coverage() {
+    let output = bree(&[
+        "list",
+        "--json",
+        "--search",
+        "bree-no-match-673882c5-7a63",
+        "--sort",
+        "name",
+        "--limit",
+        "1",
+    ]);
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let data: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(data["schema_version"], 1);
+    assert_eq!(data["schema_version"], 2);
     assert!(data["groups"].as_array().unwrap().is_empty());
     assert_eq!(data["view"]["matched_groups"], 0);
     assert_eq!(data["view"]["shown_groups"], 0);
     assert_eq!(data["view"]["sort"], "name");
     assert!(!data["processes"].as_array().unwrap().is_empty());
     assert!(data["coverage"]["enumerated_processes"].as_u64().unwrap() > 0);
-    assert_eq!(
-        data["policy"]["entries"].as_array().unwrap().len() as u64,
-        data["view"]["total_groups"].as_u64().unwrap()
-    );
-    assert_eq!(data["policy"]["automatic_count"], 0);
-    assert!(!root.exists());
 }
 
 #[cfg(target_os = "macos")]
@@ -167,14 +194,11 @@ fn numeric_list_query_returns_only_the_group_containing_the_exact_pid() {
 }
 
 #[test]
-fn installed_program_carries_project_and_dependency_notices_without_storage() {
-    let directory = std::env::temp_dir().join(format!("bree-license-test-{}", std::process::id()));
-    assert!(!directory.exists());
+fn installed_program_carries_project_and_dependency_notices_offline() {
     for third_party in [false, true] {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_bree"));
-        command
-            .env("BREE_DATA_DIR", &directory)
-            .args(["license", "--json"]);
+        let home = TestHome::new();
+        let mut command = home.command();
+        command.args(["license", "--json"]);
         if third_party {
             command.arg("--third-party");
         }
@@ -191,240 +215,25 @@ fn installed_program_carries_project_and_dependency_notices_without_storage() {
             "GNU GENERAL PUBLIC LICENSE"
         }));
     }
-    assert!(!directory.exists());
 }
 
 #[cfg(target_os = "macos")]
-mod rules {
-    use super::*;
-    use bree_cli::storage::Store;
-    use std::{
-        fs,
-        os::unix::fs::PermissionsExt,
-        path::PathBuf,
-        sync::atomic::{AtomicU64, Ordering},
-    };
-    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-    struct IsolatedStore(PathBuf);
-    impl IsolatedStore {
-        fn new() -> Self {
-            Self(std::env::temp_dir().join(format!(
-                "bree-command-rules-{}-{}",
-                std::process::id(),
-                SEQUENCE.fetch_add(1, Ordering::Relaxed)
-            )))
-        }
-        fn run(&self, args: &[&str]) -> Output {
-            Command::new(env!("CARGO_BIN_EXE_bree"))
-                .env("BREE_DATA_DIR", &self.0)
-                .args(args)
-                .output()
-                .unwrap()
-        }
-        fn private_root(&self) {
-            fs::create_dir(&self.0).unwrap();
-            fs::set_permissions(&self.0, fs::Permissions::from_mode(0o700)).unwrap();
-        }
-        fn write(&self, name: &str, contents: &str) {
-            let path = self.0.join(name);
-            fs::write(&path, contents).unwrap();
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
-        }
-    }
-    impl Drop for IsolatedStore {
-        fn drop(&mut self) {
-            if self.0.exists() {
-                fs::remove_dir_all(&self.0).unwrap();
-            }
-        }
-    }
-
-    #[test]
-    fn reading_with_no_config_creates_nothing_and_explains_zero_candidates() {
-        let store = IsolatedStore::new();
-        for args in [["list", "--json"], ["doctor", "--json"]] {
-            let output = store.run(&args);
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let row: Value = serde_json::from_slice(&output.stdout).unwrap();
-            assert_eq!(row["schema_version"], 1);
-            assert_eq!(row["policy_state_valid"], true);
-            assert!(
-                !store.0.exists(),
-                "read-only commands must not initialize storage"
-            );
-            if args[0] == "list" {
-                assert_eq!(row["policy"]["automatic_count"], 0);
-                assert_eq!(row["policy"]["read_only"], true);
-            } else {
-                assert!(row["capabilities"].get("cleanup_enabled").is_none());
-                assert_eq!(row["capabilities"]["dry_run_enabled"], true);
-                assert_eq!(row["rule_storage"]["write_status"], "not_probed");
-            }
-        }
-    }
-
-    #[test]
-    fn list_json_uses_only_categories_the_collector_assigns() {
-        let store = IsolatedStore::new();
-        let output = store.run(&["list", "--json"]);
-        assert!(output.status.success());
-        let data: Value = serde_json::from_slice(&output.stdout).unwrap();
-        for item in data["processes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .chain(data["groups"].as_array().unwrap())
-        {
-            let category = item["category"].as_str().unwrap();
-            assert!(
-                ["application", "system", "unknown"].contains(&category),
-                "{category}"
-            );
-        }
-    }
-
-    #[test]
-    fn doctor_text_reports_storage_as_one_readable_line() {
-        let storage_lines = |output: Output| -> Vec<String> {
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let text = String::from_utf8(output.stdout).unwrap();
-            let lines: Vec<String> = text
-                .lines()
-                .filter(|line| line.starts_with("Storage"))
-                .map(str::to_owned)
-                .collect();
-            for line in &lines {
-                assert!(!line.contains(['{', '}', '"']), "raw JSON: {line}");
-            }
-            lines
-        };
-        let store = IsolatedStore::new();
-        let missing = storage_lines(store.run(&["doctor"]));
-        assert_eq!(missing.len(), 1);
-        assert!(missing[0].contains("(missing)"), "{}", missing[0]);
-        assert!(missing[0].contains("rules default, revision 0, 0 rules"));
-        assert!(missing[0].contains("journal missing"));
-        assert!(missing[0].ends_with("write not probed"));
-        assert!(!store.0.exists());
-
-        store.private_root();
-        store.write("state.json", "{bad");
-        let invalid = storage_lines(store.run(&["doctor"]));
-        assert_eq!(invalid.len(), 2);
-        assert!(invalid[0].contains("(ready) · rules invalid · journal missing"));
-        assert!(invalid[1].starts_with("Storage error: Rule file is corrupt"));
-        assert_eq!(
-            fs::read_to_string(store.0.join("state.json")).unwrap(),
-            "{bad"
-        );
-
-        let relative = Command::new(env!("CARGO_BIN_EXE_bree"))
-            .env("BREE_DATA_DIR", "relative-bree-data")
-            .arg("doctor")
-            .output()
-            .unwrap();
-        let unavailable = storage_lines(relative);
-        assert_eq!(unavailable[0], "Storage: unavailable · write not probed");
-        assert!(unavailable[1].contains("must be an absolute path"));
-    }
-
-    #[test]
-    fn dry_run_freezes_read_only_plan_and_writes_only_summary() {
-        let store = IsolatedStore::new();
-        let output = store.run(&["clean", "--dry-run", "--json"]);
+#[test]
+fn list_json_uses_only_categories_the_collector_assigns() {
+    let output = bree(&["list", "--json"]);
+    assert!(output.status.success());
+    let data: Value = serde_json::from_slice(&output.stdout).unwrap();
+    for item in data["processes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(data["groups"].as_array().unwrap())
+    {
+        let category = item["category"].as_str().unwrap();
         assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
+            ["application", "system", "unknown"].contains(&category),
+            "{category}"
         );
-        let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(plan["read_only"], true);
-        assert_eq!(plan["automatic_count"], 0);
-        assert_eq!(plan["rule_revision"], 0);
-        assert!(
-            plan["entries"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|entry| entry["disposition"] != "automatic")
-        );
-        assert!(!store.0.join("state.json").exists());
-        let journal = fs::read_to_string(store.0.join("journal.jsonl")).unwrap();
-        let records: Vec<Value> = journal
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert_eq!(records.len(), 1);
-        assert_eq!(records[0]["event"], "dry_run_prepared");
-        assert_eq!(records[0]["data"]["plan_id"], plan["plan_id"]);
-        assert!(records[0]["data"].get("entries").is_none());
-        assert!(!journal.contains("executable_path"));
-        assert!(!journal.contains("bundle_path"));
-        assert_eq!(
-            fs::metadata(store.0.join("journal.jsonl"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
-        );
-    }
-
-    #[test]
-    fn corrupt_rules_disable_preview_but_keep_reading_and_preserve_original() {
-        let store = IsolatedStore::new();
-        store.private_root();
-        store.write("state.json", "{broken");
-        let list = store.run(&["list", "--json"]);
-        assert!(list.status.success());
-        let row: Value = serde_json::from_slice(&list.stdout).unwrap();
-        assert_eq!(row["policy_state_valid"], false);
-        assert_eq!(row["policy"]["automatic_count"], 0);
-        assert!(
-            row["policy"]["entries"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|entry| entry["disposition"] == "protected")
-        );
-        {
-            let clean = store.run(&["clean", "--dry-run", "--json"]);
-            assert_eq!(clean.status.code(), Some(1));
-            let error: Value = serde_json::from_slice(&clean.stdout).unwrap();
-            assert_eq!(error["error"]["code"], "runtime_error");
-        }
-        assert_eq!(
-            fs::read_to_string(store.0.join("state.json")).unwrap(),
-            "{broken"
-        );
-        assert!(!store.0.join("journal.jsonl").exists());
-    }
-
-    #[test]
-    fn execution_lock_and_failed_journal_block_new_preview() {
-        let store = IsolatedStore::new();
-        let lane = Store::at(store.0.clone());
-        let guard = lane.execution_lock().unwrap();
-        let output = store.run(&["clean", "--dry-run", "--json"]);
-        assert_eq!(output.status.code(), Some(1));
-        assert!(
-            String::from_utf8_lossy(&output.stderr).contains("cleanup or dry run is in progress")
-        );
-        drop(guard);
-        // A directory at the journal path is an actual I/O obstacle even for an admin account.
-        fs::create_dir(store.0.join("journal.jsonl")).unwrap();
-        let output = store.run(&["clean", "--dry-run", "--json"]);
-        assert_eq!(output.status.code(), Some(1));
-        assert!(store.0.join("journal.jsonl").is_dir());
-        assert!(!store.0.join("state.json").exists());
     }
 }
 
@@ -439,12 +248,11 @@ fn real_snapshot_preserves_missing_values_and_redacts_paths() {
     );
     assert!(!output.stdout.contains(&0x1b));
     let snapshot: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(snapshot["schema_version"], 1);
+    assert_eq!(snapshot["schema_version"], 2);
     let processes = snapshot["processes"].as_array().unwrap();
     assert!(!processes.is_empty());
     for process in processes {
         assert!(process["executable_path"].is_null());
-        assert_eq!(process["quit_supported"], false);
         let metric = &process["memory_bytes"];
         if metric["status"] != "ok" {
             assert!(metric["value"].is_null());
@@ -507,7 +315,7 @@ fn stale_inspect_fails_as_structured_error() {
     let output = bree(&["inspect", "p:invalid:1:1:0", "--json"]);
     assert_eq!(output.status.code(), Some(1));
     let error: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(error["schema_version"], 1);
+    assert_eq!(error["schema_version"], 2);
     assert!(
         error["error"]["message"]
             .as_str()
@@ -527,7 +335,9 @@ fn cancelled_json_watch_exits_even_when_its_pipe_is_not_read() {
         thread,
         time::{Duration, Instant},
     };
-    let mut child = Command::new(env!("CARGO_BIN_EXE_bree"))
+    let home = TestHome::new();
+    let mut child = home
+        .command()
         .args(["watch", "--json", "--interval", "1"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -579,8 +389,102 @@ fn cancelled_json_watch_exits_even_when_its_pipe_is_not_read() {
 }
 
 #[test]
-fn removed_execution_and_history_are_rejected() {
-    for args in [["clean", "--yes"].as_slice(), ["history"].as_slice()] {
+fn removed_commands_are_rejected() {
+    for args in [
+        ["clean"].as_slice(),
+        ["clean", "--yes"].as_slice(),
+        ["clean", "--dry-run"].as_slice(),
+        ["history"].as_slice(),
+    ] {
         assert_eq!(bree(args).status.code(), Some(2));
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn all_commands_leave_an_empty_home_unchanged() {
+    let home = TestHome::new();
+    let sample = home.run(&["list", "--json"]);
+    assert!(sample.status.success());
+    let sample: Value = serde_json::from_slice(&sample.stdout).unwrap();
+    assert_eq!(sample["schema_version"], 2);
+    let keys: Vec<_> = sample
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "collected_in_ms",
+            "coverage",
+            "diagnostics",
+            "groups",
+            "processes",
+            "sampled_at_unix_ms",
+            "schema_version",
+            "system",
+            "view"
+        ]
+    );
+    let processes = sample["processes"].as_array().unwrap();
+    let own = processes
+        .iter()
+        .find(|p| p["identity"]["pid"].as_u64() == Some(std::process::id() as u64))
+        .unwrap();
+    let keys: Vec<_> = own
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "attribution",
+            "category",
+            "cpu_one_core_percent",
+            "development_label",
+            "executable_path",
+            "id",
+            "identity",
+            "memory_bytes",
+            "metric_kind",
+            "name",
+            "parent_pid",
+            "uid"
+        ]
+    );
+    let id = own["id"].as_str().unwrap();
+    for args in [
+        vec!["status"],
+        vec!["status", "--json"],
+        vec!["list"],
+        vec!["list", "--json"],
+        vec!["inspect", id],
+        vec!["inspect", id, "--json"],
+        vec!["watch", "--count", "2", "--interval", "1"],
+        vec!["watch", "--json", "--count", "2", "--interval", "1"],
+        vec!["doctor"],
+        vec!["doctor", "--json"],
+        vec!["license"],
+        vec!["license", "--json"],
+        vec!["license", "--third-party"],
+        vec!["license", "--third-party", "--json"],
+    ] {
+        let output = home.run(&args);
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if args == ["doctor", "--json"] {
+            let doctor: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(
+                doctor["capabilities"],
+                serde_json::json!({"read_only":true, "ai_attribution_enabled":true, "background_service":false})
+            );
+        }
     }
 }

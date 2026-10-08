@@ -25,7 +25,7 @@ from check_env import bree_environment, empty_bree_environment
 # cannot clear. PENDIN is transient line-discipline state, not a raw-mode bit.
 MUTABLE_FLAGS = os.O_APPEND | os.O_ASYNC | os.O_SYNC | os.O_DSYNC | os.O_NONBLOCK
 OUTPUT_LIMIT = 512 * 1024
-HOME_MARKER = b"Preview"
+HOME_MARKER = b"1. Memory"
 
 
 def modes(fd):
@@ -102,7 +102,7 @@ def run_case(binary, case, requested_signal, close_master, args, iteration):
         before = terminal_state(slave)
         mark("before_spawn", terminal=before)
         child = subprocess.Popen([str(binary)], stdin=slave, stdout=slave, stderr=slave,
-                                 env=bree_environment(args.data_dir))
+                                 env=bree_environment(args.home_dir))
         mark("spawn_returned", pid=child.pid)
         if args.send_after_ms is None:
             deadline = time.monotonic() + args.startup_timeout
@@ -228,8 +228,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=Path("target/release/bree"))
     parser.add_argument("--output", type=Path, default=Path(".artifacts/signal-check.json"))
-    parser.add_argument("--data-dir", type=Path,
-                        help="explicit isolated BREE_DATA_DIR; default is a fresh private store beside the report")
+    parser.add_argument("--home-dir", type=Path,
+                        help="explicit isolated HOME; default is a fresh private home beside the report")
     parser.add_argument("--repeat", type=positive_int, default=1)
     parser.add_argument("--startup-timeout", type=positive_int, default=5)
     parser.add_argument("--exit-timeout", type=positive_int, default=5)
@@ -240,8 +240,8 @@ def main():
         parser.error("--send-after-ms must be between 0 and 10000")
     binary = args.binary.resolve()
     with empty_bree_environment(args.output) as env:
-        args.data_dir = (args.data_dir.resolve() if args.data_dir is not None else
-                         Path(env["BREE_DATA_DIR"]))
+        args.home_dir = (args.home_dir.resolve() if args.home_dir is not None else
+                         Path(env["HOME"]))
         results = [
             run_case(binary, case, requested_signal, close_master, args, iteration)
             for iteration in range(args.repeat)
@@ -254,7 +254,7 @@ def main():
     report = {
         "status": "passed" if all(case["status"] == "passed" for case in results) else "failed",
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
-        "data_dir": str(args.data_dir),
+        "home_dir": str(args.home_dir),
         "send_policy": "first_home_frame" if args.send_after_ms is None else "diagnostic_timer",
         "send_after_ms": args.send_after_ms,
         "cases": results,

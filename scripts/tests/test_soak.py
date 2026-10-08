@@ -16,7 +16,7 @@ SOAK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SOAK)
 
 HOME = ("Memory pressure: Normal\nUsed 1 GiB / Total 2 GiB\n"
-        "UTC 01:02:03 · 10 ms\n3. Memory\nEnter Open")
+        "UTC 01:02:03 · 10 ms\n1. Memory\nEnter Open")
 RESOURCES = ("bree Memory\nSample UTC 01:02:03 · 10 ms\n"
              "/ Search names, Bundle ID or exact PID\nEsc Home\nMemory · 2.0s refresh")
 FAKE = r'''#!INTERPRETER
@@ -24,7 +24,7 @@ import os,select,sys,termios,time,tty
 assert os.environ['TERM']=='xterm-256color'
 assert os.environ['COLORTERM']=='truecolor'
 assert 'NO_COLOR' not in os.environ
-assert os.environ['BREE_DATA_DIR']!='/caller/private-store'
+assert os.environ['HOME']!='/caller/private-store'
 before=termios.tcgetattr(0)
 tty.setraw(0)
 page='resources' if len(sys.argv)>1 else 'home'
@@ -34,7 +34,7 @@ def draw():
     stamp='01:02:%02d' % (number % 60)
     number+=1
     if page=='home':
-        text='Memory pressure: Normal\nUTC '+stamp+' · 10 ms\n3. Memory\nEnter Open'
+        text='Memory pressure: Normal\nUTC '+stamp+' · 10 ms\n1. Memory\nEnter Open'
     else:
         text='bree Memory\nSample UTC '+stamp+' · 10 ms\n/ Search names, Bundle ID or exact PID\nEsc Home\nMemory · 2.0s refresh'
     os.write(1,('\x1b[2J\x1b[H'+text.replace('\n','\r\n')).encode())
@@ -46,7 +46,7 @@ try:
             key=os.read(0,10)
             if b'q' in key:
                 break
-            if b'3' in key:
+            if b'1' in key:
                 page='resources'
                 draw()
                 next_draw=time.monotonic()+.09
@@ -81,7 +81,7 @@ class SoakTests(unittest.TestCase):
         for position in range(0, len(data), 3):
             screen.feed(data[position:position + 3])
         self.assertEqual(SOAK.page_state(screen.text())["page"], "resources")
-        self.assertNotIn("3. Memory", screen.text())
+        self.assertNotIn("1. Memory", screen.text())
 
     def test_nearest_rank_p95_and_bounded_growth_evidence(self):
         rows = [{"elapsed_seconds": n * 10, "rss_bytes": n + 1, "cpu_seconds": n * .1}
@@ -103,7 +103,7 @@ class SoakTests(unittest.TestCase):
             args = argparse.Namespace(binary=binary, output=folder / "soak.json",
                                       home_seconds=.3, resources_seconds=.4,
                                       watch_seconds=.4, sample_interval=.08)
-            with patch.dict(os.environ, {"BREE_DATA_DIR": "/caller/private-store", "TERM": "dumb",
+            with patch.dict(os.environ, {"HOME": "/caller/private-store", "TERM": "dumb",
                                          "COLORTERM": "caller", "NO_COLOR": "1"}):
                 report = SOAK.run(args)
             self.assertEqual(report["status"], "passed", report.get("error"))
@@ -144,12 +144,12 @@ class SoakTests(unittest.TestCase):
                 self.assertIsNone(report[name]["average_cpu_one_core_percent"])
                 self.assertIsNone(report[name]["rss_p95_bytes"])
 
-    def test_relative_caller_data_dir_is_ignored(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"BREE_DATA_DIR": "relative"}):
+    def test_relative_caller_home_dir_is_ignored(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"HOME": "relative"}):
             args = argparse.Namespace(binary=Path("unused"), output=Path(directory) / "soak.json")
             with patch.object(SOAK, "observe") as observe:
                 SOAK.run(args)
-            store = Path(observe.call_args.args[2]["BREE_DATA_DIR"])
+            store = Path(observe.call_args.args[2]["HOME"])
             self.assertTrue(store.is_absolute())
             self.assertEqual(store.parent.parent, Path(directory).resolve())
             self.assertFalse(store.parent.exists())

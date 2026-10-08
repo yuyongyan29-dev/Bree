@@ -63,7 +63,7 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
     pixel_enabled = color_profile in ("rgb", "256")
     screen = Screen(columns, rows, pixel_enabled)
     with tempfile.TemporaryDirectory(prefix="bree-theme-check-") as temporary:
-        env = bree_environment(Path(temporary) / "store")
+        env = bree_environment(Path(temporary) / "home")
         env["COLORFGBG"] = colorfgbg
         if color_profile != "rgb":
             env.pop("COLORTERM", None)
@@ -74,17 +74,13 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
         elif color_profile == "unspecified":
             env.pop("TERM", None)
         child = subprocess.Popen([str(binary)], stdin=slave, stdout=slave, stderr=slave, env=env)
-        # These keys only inspect pages. They never confirm a rule or request application quit.
-        stages = [("Memory pressure:", b"s"), ("Settings · Allow / Protect", b"\x1b"),
-                  ("Memory pressure:", b"3\r"), ("bree Memory", b"/"),
+        stages = [("Memory pressure:", b"1\r"), ("bree Memory", b"/"),
                   ("Enter Apply", b"qrsa"), ("Search: qrsa", b"\x15bree-private-pty-no-match\r"),
                   ("No matches in this filter.", b"/"), ("Enter Apply", b"\x15draft\x1b"),
                   ("Search: bree-private-pty-no-match", b"\x1b"), ("/ Search names", b"\x1b"),
-                  ("Memory pressure:", b"1\r"), ("Preview · No quit requests", b"\x1b"),
-                  ("Memory pressure:", b"p"), ("Preview · No quit requests", b"\x1b"),
                   ("Memory pressure:", b"q")]
         if cancel_in_editor:
-            stages = [("Memory pressure:", b"3\r"), ("bree Memory", b"/"),
+            stages = [("Memory pressure:", b"1\r"), ("bree Memory", b"/"),
                       ("Enter Apply", b"\x03")]
         if resize_home:
             stages = [("Memory pressure:", (48, 16)),
@@ -111,17 +107,17 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
                         home = screen.lines()
                         home_backgrounds = screen.colored_background_count()
                         home_color_cells = list(screen.color_cells.values())
-                        for label in ("1. Preview", "2. Needs review", "> 3. Memory", "S Settings", "Q Quit"):
+                        for label in ("> 1. Memory", "Q Quit"):
                             if label not in screen.text():
                                 raise RuntimeError(f"home entry clipped: {label}\n{screen.text()}")
                         if "-.-" in screen.text() or "Rules and preview" in screen.text():
                             raise RuntimeError("removed mascot or subtitle remains")
-                        for label in ("Memory pressure:", "> 3. Memory", "P Preview"):
+                        for label in ("Memory pressure:", "> 1. Memory", "Q Quit"):
                             line = next(line for line in home if label in line)
                             if line.index(label) != 2:
                                 raise RuntimeError(f"home content was shifted by the mascot: {line}")
-                        menu_row = next(i for i, line in enumerate(home) if "3. Memory" in line)
-                        footer_row = next(i for i, line in enumerate(home) if "↑↓ /" in line)
+                        menu_row = next(i for i, line in enumerate(home) if "1. Memory" in line)
+                        footer_row = next(i for i, line in enumerate(home) if "1 Select" in line)
                         if footer_row - menu_row > 2:
                             raise RuntimeError("home shortcuts are too far below the menu")
                     else:
@@ -173,7 +169,7 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
                     "brand": "mascot" if mascot else "wordmark" if expanded else "compact",
                     "default_background_outside_sprite": True, "no_reverse_video": True,
                     "pages_opened": (["Home"] if resize_home else ["Home", "Memory"]
-                                     if cancel_in_editor else ["Home", "Settings", "Memory", "Preview"]),
+                                     if cancel_in_editor else ["Home", "Memory"]),
                     "critical_entries_visible": True, "home_lines": home,
                     "home_color_cells": home_color_cells,
                     "exit_code": child.returncode, "terminal_restored": True,

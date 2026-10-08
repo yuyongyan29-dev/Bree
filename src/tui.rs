@@ -1,4 +1,4 @@
-//! Inspection, exact installation rules, and preview UI.
+//! Read-only memory inspection UI without persistent state.
 //! A snapshot worker never owns or changes terminal state.
 
 use std::io::{self, IsTerminal, Stdout};
@@ -29,14 +29,9 @@ use crate::brand::{self, ColorDepth};
 use crate::collect::{Collector, pump_platform_events};
 use crate::model::{Category, OccupancyGroup, ProcessInfo, Snapshot, safe_text};
 use crate::output::{metric_bytes, missing_text, pressure_text};
-use crate::policy::{
-    AppScope, CleanupPlan, Disposition, PlanEntry, PolicyContext, PolicyState, RuleAction,
-    RuleChange, evaluate, scope_for_group,
-};
 use crate::query::{
     GroupSort as Sort, MAX_SEARCH_CHARS, compare_groups, group_matches, validate_search,
 };
-use crate::storage::Store;
 
 const ACCENT: Color = Color::Rgb(190, 86, 24);
 const FOREGROUND: Color = Color::Reset;
@@ -162,22 +157,6 @@ enum Page {
     Home,
     Resources,
     Detail(String),
-    Settings,
-    RuleDetail(String),
-    Preview,
-}
-
-enum RuleConfirmation {
-    Add {
-        action: RuleAction,
-        scope: AppScope,
-        name: String,
-    },
-    Remove {
-        id: String,
-        action: RuleAction,
-        scope: AppScope,
-    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -186,17 +165,10 @@ enum Filter {
     Application,
     Ai,
     System,
-    Pending,
 }
 
 impl Filter {
-    const ALL: [Self; 5] = [
-        Self::All,
-        Self::Application,
-        Self::Ai,
-        Self::System,
-        Self::Pending,
-    ];
+    const ALL: [Self; 4] = [Self::All, Self::Application, Self::Ai, Self::System];
 
     fn index(self) -> usize {
         Self::ALL
@@ -210,8 +182,8 @@ impl Filter {
             Self::All => true,
             Self::Application => category == Category::Application,
             Self::System => category == Category::System,
-            // Development labels and policy state decide these in group_in_filter.
-            Self::Ai | Self::Pending => false,
+            // Development labels decide this in group_in_filter.
+            Self::Ai => false,
         }
     }
 }
@@ -245,23 +217,12 @@ struct App {
     notice: Option<String>,
     sampled: Option<Instant>,
     refresh_interval: Duration,
-    store: Option<Store>,
-    policy: PolicyState,
-    policy_error: Option<String>,
-    plan: Option<CleanupPlan>,
-    preview_plan: Option<CleanupPlan>,
-    preview_error: Option<String>,
-    preview_sample: Option<String>,
-    preview_refresh_queued: bool,
-    rules: ListState,
-    confirmation: Option<RuleConfirmation>,
-    confirmation_scroll: u16,
 }
 
 impl App {
     fn new(watch: bool) -> Self {
         let mut menu = ListState::default();
-        menu.select(Some(2));
+        menu.select(Some(0));
         Self {
             page: if watch { Page::Resources } else { Page::Home },
             snapshot: None,
@@ -284,72 +245,7 @@ impl App {
             notice: None,
             sampled: None,
             refresh_interval: Duration::from_secs(2),
-            store: None,
-            policy: PolicyState::default(),
-            policy_error: None,
-            plan: None,
-            preview_plan: None,
-            preview_error: None,
-            preview_sample: None,
-            preview_refresh_queued: false,
-            rules: ListState::default(),
-            confirmation: None,
-            confirmation_scroll: 0,
         }
-    }
-
-    fn initialize_store(&mut self) {
-        match Store::from_env() {
-            Ok(store) => {
-                self.store = Some(store);
-                self.reload_policy();
-            }
-            Err(error) => {
-                self.policy_error = Some(safe_text(&error));
-                self.evaluate_policy();
-            }
-        }
-    }
-
-    fn reload_policy(&mut self) {
-        let selected = self
-            .rules
-            .selected()
-            .and_then(|index| self.policy.rules.get(index))
-            .map(|rule| rule.id.clone());
-        if let Some(store) = &self.store {
-            match store.load() {
-                Ok(state) => {
-                    self.policy = state;
-                    self.policy_error = None;
-                }
-                Err(error) => self.policy_error = Some(safe_text(&error)),
-            }
-        }
-        let index = selected
-            .as_ref()
-            .and_then(|id| self.policy.rules.iter().position(|rule| &rule.id == id))
-            .or_else(|| (!self.policy.rules.is_empty()).then_some(0));
-        self.rules.select(index);
-        self.evaluate_policy();
-    }
-
-    fn evaluate_policy(&mut self) {
-        self.plan = self.snapshot.as_ref().map(|snapshot| {
-            evaluate(
-                snapshot,
-                &self.policy,
-                &PolicyContext {
-                    state_valid: self.policy_error.is_none(),
-                },
-            )
-        });
-    }
-
-    fn entry(&self, id: &str) -> Option<&PlanEntry> {
-        self.plan
-            .as_ref()
-            .and_then(|plan| plan.entries.iter().find(|entry| entry.group_id == id))
     }
 
     fn group_has_development_label(&self, group: &OccupancyGroup) -> bool {
@@ -358,153 +254,6 @@ impl App {
                 group.process_ids.contains(&process.id) && label_process(process).is_some()
             })
         })
-    }
-
-    fn begin_add(&mut self, id: &str, action: RuleAction) {
-        if self.policy_error.is_some() || self.store.is_none() {
-            self.notice = Some(
-                "Rules unavailable; read-only mode. See Settings for details. Damaged configuration will be preserved.".into(),
-            );
-            return;
-        }
-        let Some(snapshot) = &self.snapshot else {
-            return;
-        };
-        match scope_for_group(snapshot, id) {
-            Ok(scope) => {
-                let name = snapshot
-                    .groups
-                    .iter()
-                    .find(|group| group.id == id)
-                    .map(|group| safe_text(&group.name))
-                    .unwrap_or_default();
-                self.confirmation = Some(RuleConfirmation::Add {
-                    action,
-                    scope,
-                    name,
-                });
-                self.confirmation_scroll = 0;
-            }
-            Err(error) => {
-                self.notice = Some(format!(
-                    "Cannot set an application rule for this object: {}",
-                    safe_text(&error)
-                ))
-            }
-        }
-    }
-
-    fn begin_remove(&mut self) {
-        if self.policy_error.is_some() || self.store.is_none() {
-            self.notice = Some(
-                "Rules unavailable. Repair the original configuration, then press R to reload."
-                    .into(),
-            );
-            return;
-        }
-        let rule = match &self.page {
-            Page::RuleDetail(id) => self.policy.rules.iter().find(|rule| &rule.id == id),
-            _ => self
-                .rules
-                .selected()
-                .and_then(|index| self.policy.rules.get(index)),
-        };
-        if let Some(rule) = rule {
-            self.confirmation = Some(RuleConfirmation::Remove {
-                id: rule.id.clone(),
-                action: rule.action,
-                scope: rule.scope.clone(),
-            });
-            self.confirmation_scroll = 0;
-        }
-    }
-
-    fn confirm_change(&mut self) {
-        self.reload_policy();
-        if self.policy_error.is_some() {
-            self.confirmation = None;
-            self.notice = Some(
-                "Cannot read rule state; save cancelled, read-only mode. See Settings for details."
-                    .into(),
-            );
-            return;
-        }
-        let Some(confirmation) = self.confirmation.take() else {
-            return;
-        };
-        let change = match confirmation {
-            RuleConfirmation::Add { action, scope, .. } => RuleChange::Add { action, scope },
-            RuleConfirmation::Remove { id, .. } => RuleChange::Remove { id },
-        };
-        let Some(store) = &self.store else {
-            return;
-        };
-        match store.change(change) {
-            Ok(state) => {
-                self.policy = state;
-                self.reload_policy();
-                self.reconcile_selection();
-                self.notice = Some("Rule saved. This changes future classification only; no quit request is sent. Remove the rule in Settings.".into());
-            }
-            Err(error) => {
-                self.policy_error = Some(safe_text(&error));
-                self.evaluate_policy();
-                self.notice = Some(format!(
-                    "Rule save failed; read-only mode: {}",
-                    safe_text(&error)
-                ));
-            }
-        }
-    }
-
-    fn open_preview(&mut self) {
-        self.page = Page::Preview;
-        self.detail_scroll = 0;
-        self.preview_plan = None;
-        self.preview_error = None;
-        self.preview_sample = None;
-        self.preview_refresh_queued = false;
-        self.reload_policy();
-        let Some(snapshot) = self.snapshot.as_ref().cloned() else {
-            return;
-        };
-        self.preview_sample = Some(since_sample(&snapshot));
-        let fallback = || {
-            evaluate(
-                &snapshot,
-                &self.policy,
-                &PolicyContext { state_valid: false },
-            )
-        };
-        if self.policy_error.is_some() {
-            self.preview_error = self.policy_error.clone();
-            self.preview_plan = Some(fallback());
-            return;
-        }
-        let Some(store) = &self.store else {
-            self.preview_error = Some("Rule storage unavailable".into());
-            self.preview_plan = Some(fallback());
-            return;
-        };
-        match crate::preview::prepare(store, &snapshot) {
-            Ok(plan) => {
-                self.preview_plan = Some(plan);
-                self.reload_policy();
-            }
-            Err(error) => {
-                self.reload_policy();
-                self.preview_error = Some(safe_text(&error));
-                self.preview_plan = Some(evaluate(
-                    &snapshot,
-                    &self.policy,
-                    &PolicyContext { state_valid: false },
-                ));
-                self.notice = Some(format!(
-                    "Preview incomplete: {}. No quit requests are sent.",
-                    safe_text(&error)
-                ));
-            }
-        }
     }
 
     fn groups(&self) -> Vec<&OccupancyGroup> {
@@ -523,9 +272,6 @@ impl App {
 
     fn group_in_filter(&self, group: &OccupancyGroup) -> bool {
         match self.filter {
-            Filter::Pending => self
-                .entry(&group.id)
-                .is_some_and(|entry| entry.disposition == Disposition::Pending),
             Filter::Ai => self.group_has_development_label(group),
             _ => self.filter.accepts(group.category),
         }
@@ -609,24 +355,10 @@ impl App {
             Ok(snapshot) => {
                 self.snapshot = Some(snapshot);
                 self.error = None;
-                self.evaluate_policy();
-                if self.page == Page::Preview
-                    && self.preview_plan.is_none()
-                    && self.preview_error.is_none()
-                    && !self.preview_refresh_queued
-                {
-                    self.open_preview();
-                }
                 self.reconcile_selection();
             }
             Err(error) => {
                 self.error = Some(safe_text(&error));
-                if self.page == Page::Preview
-                    && self.preview_plan.is_none()
-                    && !self.preview_refresh_queued
-                {
-                    self.preview_error = Some(format!("Sampling failed: {}", safe_text(&error)));
-                }
             }
         }
     }
@@ -663,12 +395,12 @@ impl App {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return InputResult::Quit(true);
         }
-        // Editor text must be handled before application shortcuts such as Q, R or S.
+        // Editor text must be handled before application shortcuts such as Q or R.
         if self.search_editor.is_some() {
             self.edit_search(key);
             return InputResult::Continue;
         }
-        if key.code == KeyCode::Char('q') || key.code == KeyCode::Char('Q') {
+        if matches!(key.code, KeyCode::Char('q' | 'Q')) {
             return InputResult::Quit(false);
         }
         if self.notice.is_some() {
@@ -677,47 +409,8 @@ impl App {
             }
             return InputResult::Continue;
         }
-        if self.confirmation.is_some() {
-            match key.code {
-                KeyCode::Esc => self.confirmation = None,
-                KeyCode::Enter => self.confirm_change(),
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.confirmation_scroll = self.confirmation_scroll.saturating_sub(1)
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.confirmation_scroll = self.confirmation_scroll.saturating_add(1)
-                }
-                KeyCode::PageUp => {
-                    self.confirmation_scroll = self.confirmation_scroll.saturating_sub(10)
-                }
-                KeyCode::PageDown => {
-                    self.confirmation_scroll = self.confirmation_scroll.saturating_add(10)
-                }
-                _ => {}
-            }
-            return InputResult::Continue;
-        }
         match key.code {
-            KeyCode::Char('r' | 'R') => {
-                self.reload_policy();
-                if self.page == Page::Settings || matches!(self.page, Page::RuleDetail(_)) {
-                    return InputResult::Continue;
-                }
-                if self.page == Page::Preview {
-                    // Retire the old plan immediately. If an earlier request is still
-                    // running, its response is not the explicitly requested new sample.
-                    self.preview_plan = None;
-                    self.preview_error = None;
-                    self.preview_sample = None;
-                    self.preview_refresh_queued = self.loading;
-                }
-                return InputResult::Refresh;
-            }
-            KeyCode::Char('s' | 'S') => {
-                self.reload_policy();
-                self.page = Page::Settings;
-                self.detail_scroll = 0;
-            }
+            KeyCode::Char('r' | 'R') => return InputResult::Refresh,
             KeyCode::Esc => match self.page {
                 Page::Detail(_) => {
                     self.page = Page::Resources;
@@ -728,49 +421,29 @@ impl App {
                     self.reconcile_selection();
                 }
                 Page::Resources => self.page = Page::Home,
-                Page::Settings | Page::Preview => self.page = Page::Home,
-                Page::RuleDetail(_) => {
-                    self.page = Page::Settings;
-                    self.detail_scroll = 0;
-                }
                 Page::Home => {}
             },
             _ => match &self.page {
-                Page::Home => {
-                    let mut index = self.menu.selected().unwrap_or(2);
-                    match key.code {
-                        KeyCode::Up | KeyCode::Char('k') => index = index.saturating_sub(1),
-                        KeyCode::Down | KeyCode::Char('j') => index = (index + 1).min(2),
-                        KeyCode::Char(value @ '1'..='3') => index = (value as u8 - b'1') as usize,
-                        KeyCode::Enter => match index {
-                            0 => self.open_preview(),
-                            1 => {
-                                self.set_filter(Filter::Pending);
-                                self.page = Page::Resources;
-                            }
-                            2 => {
-                                self.set_filter(Filter::All);
-                                self.page = Page::Resources;
-                            }
-                            _ => {}
-                        },
-                        KeyCode::Char('p' | 'P') => self.open_preview(),
-                        _ => {}
+                Page::Home => match key.code {
+                    KeyCode::Enter => {
+                        self.set_filter(Filter::All);
+                        self.page = Page::Resources;
                     }
-                    self.menu.select(Some(index));
-                }
+                    KeyCode::Char('1') => self.menu.select(Some(0)),
+                    _ => {}
+                },
                 Page::Resources => match key.code {
                     KeyCode::Char('/') => self.begin_search(),
-                    KeyCode::Char('p' | 'P') => self.open_preview(),
                     KeyCode::Up | KeyCode::Char('k') => self.move_row(false),
                     KeyCode::Down | KeyCode::Char('j') => self.move_row(true),
                     KeyCode::Tab | KeyCode::Right => {
-                        self.set_filter(Filter::ALL[(self.filter.index() + 1) % 5])
+                        self.set_filter(Filter::ALL[(self.filter.index() + 1) % Filter::ALL.len()])
                     }
-                    KeyCode::BackTab | KeyCode::Left => {
-                        self.set_filter(Filter::ALL[(self.filter.index() + 4) % 5])
-                    }
-                    KeyCode::Char(value @ '1'..='5') => {
+                    KeyCode::BackTab | KeyCode::Left => self.set_filter(
+                        Filter::ALL
+                            [(self.filter.index() + Filter::ALL.len() - 1) % Filter::ALL.len()],
+                    ),
+                    KeyCode::Char(value @ '1'..='4') => {
                         self.set_filter(Filter::ALL[(value as u8 - b'1') as usize])
                     }
                     KeyCode::Char('o' | 'O') => {
@@ -789,49 +462,7 @@ impl App {
                     }
                     _ => {}
                 },
-                Page::Detail(id) => match key.code {
-                    KeyCode::Char('a' | 'A') => self.begin_add(&id.clone(), RuleAction::Allow),
-                    KeyCode::Char('p' | 'P') => self.begin_add(&id.clone(), RuleAction::Protect),
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        self.detail_scroll = self.detail_scroll.saturating_sub(1)
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        self.detail_scroll = self.detail_scroll.saturating_add(1)
-                    }
-                    KeyCode::PageUp => self.detail_scroll = self.detail_scroll.saturating_sub(10),
-                    KeyCode::PageDown => self.detail_scroll = self.detail_scroll.saturating_add(10),
-                    KeyCode::Home => self.detail_scroll = 0,
-                    _ => {}
-                },
-                Page::Settings => match key.code {
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        let next = self.rules.selected().unwrap_or(0).saturating_sub(1);
-                        self.rules
-                            .select((!self.policy.rules.is_empty()).then_some(next));
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        let next = (self.rules.selected().unwrap_or(0) + 1)
-                            .min(self.policy.rules.len().saturating_sub(1));
-                        self.rules
-                            .select((!self.policy.rules.is_empty()).then_some(next));
-                    }
-                    KeyCode::Char('d' | 'D') => self.begin_remove(),
-                    KeyCode::Enter => {
-                        if let Some(rule) = self
-                            .rules
-                            .selected()
-                            .and_then(|index| self.policy.rules.get(index))
-                        {
-                            self.page = Page::RuleDetail(rule.id.clone());
-                            self.detail_scroll = 0;
-                        }
-                    }
-                    _ => {}
-                },
-                Page::RuleDetail(_) | Page::Preview => match key.code {
-                    KeyCode::Char('d' | 'D') if matches!(self.page, Page::RuleDetail(_)) => {
-                        self.begin_remove()
-                    }
+                Page::Detail(_) => match key.code {
                     KeyCode::Up | KeyCode::Char('k') => {
                         self.detail_scroll = self.detail_scroll.saturating_sub(1)
                     }
@@ -854,15 +485,6 @@ impl App {
             && self
                 .sampled
                 .is_some_and(|sampled| sampled.elapsed() >= interval)
-    }
-
-    fn take_queued_preview_refresh(&mut self) -> bool {
-        if self.page == Page::Preview && self.preview_refresh_queued && !self.loading {
-            self.preview_refresh_queued = false;
-            true
-        } else {
-            false
-        }
     }
 }
 
@@ -940,7 +562,6 @@ fn run_loop(
     worker: &mut Option<Worker>,
     interval: Duration,
 ) -> Result<bool, String> {
-    app.initialize_store();
     refresh(app, worker)?;
     let mut redraw = true;
     loop {
@@ -959,10 +580,6 @@ fn run_loop(
             }
         }
         if app.should_refresh(interval) {
-            refresh(app, worker)?;
-            redraw = true;
-        }
-        if app.take_queued_preview_refresh() {
             refresh(app, worker)?;
             redraw = true;
         }
@@ -1003,308 +620,6 @@ fn category_name(category: Category) -> &'static str {
         Category::System => "System",
         Category::Unknown => "Unknown",
     }
-}
-
-fn action_name(action: RuleAction) -> &'static str {
-    match action {
-        RuleAction::Allow => "Allow",
-        RuleAction::Protect => "Protect",
-    }
-}
-
-fn disposition_name(disposition: Disposition) -> &'static str {
-    match disposition {
-        Disposition::Automatic => "Automatic",
-        Disposition::Pending => "Needs review",
-        Disposition::Protected => "Protected",
-    }
-}
-
-fn scope_lines(scope: &AppScope) -> Vec<Line<'static>> {
-    vec![
-        Line::from(format!("Bundle ID: {}", safe_text(&scope.bundle_id))),
-        Line::from(format!("Installation: {}", safe_text(&scope.bundle_path))),
-        Line::from(format!(
-            "Main executable: {}",
-            safe_text(&scope.executable_path)
-        )),
-        Line::from("Rules match this exact installation; names, PIDs and wildcards are not used."),
-    ]
-}
-
-fn render_scrolled(frame: &mut Frame<'_>, lines: Vec<Line<'static>>, area: Rect, scroll: &mut u16) {
-    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-    let max = paragraph
-        .line_count(area.width)
-        .saturating_sub(area.height as usize)
-        .min(u16::MAX as usize) as u16;
-    *scroll = (*scroll).min(max);
-    frame.render_widget(paragraph.scroll((*scroll, 0)), area);
-}
-
-fn render_settings(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let chunks = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(3),
-        Constraint::Min(3),
-        Constraint::Length(3),
-    ])
-    .split(area);
-    frame.render_widget(
-        Paragraph::new(title("Settings · Allow / Protect")),
-        chunks[0],
-    );
-    let status = match &app.policy_error {
-        Some(error) => format!(
-            "Cannot read rules; read-only: {}\nSave and remove are disabled. Original file preserved. R reloads.",
-            safe_text(error)
-        ),
-        None => format!(
-            "{} rules · rev {} · Protect overrides Allow\n{}",
-            app.policy.rules.len(),
-            app.policy.revision,
-            "Normal quit is disabled."
-        ),
-    };
-    frame.render_widget(Paragraph::new(status).wrap(Wrap { trim: false }), chunks[1]);
-    if app.policy.rules.is_empty() {
-        frame.render_widget(Paragraph::new("No rules yet; zero automatic targets is valid.\nIn Details, A allows and P protects. Confirm the exact installation.\nSetting a rule does not quit the application.").wrap(Wrap { trim: false }), chunks[2]);
-    } else {
-        let rules: Vec<_> = app
-            .policy
-            .rules
-            .iter()
-            .map(|rule| {
-                ListItem::new(format!(
-                    "{} · {} · {}{}",
-                    action_name(rule.action),
-                    safe_text(&rule.scope.bundle_id),
-                    safe_text(&rule.scope.bundle_path),
-                    if rule.enabled { "" } else { " · disabled" }
-                ))
-            })
-            .collect();
-        frame.render_stateful_widget(
-            List::new(rules)
-                .highlight_symbol(selection_marker())
-                .highlight_style(selection_style()),
-            chunks[2],
-            &mut app.rules,
-        );
-    }
-    frame.render_widget(Paragraph::new("↑↓ Select  Enter Scope  D Remove\nR Reload  Esc Home  Q Quit\nRemove affects this rule, not the old config.").style(Style::default().add_modifier(Modifier::DIM)), chunks[3]);
-}
-
-fn render_rule_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
-    let chunks = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(4),
-        Constraint::Length(2),
-    ])
-    .split(area);
-    frame.render_widget(Paragraph::new(title("Rule scope")), chunks[0]);
-    let mut lines = Vec::new();
-    if let Some(rule) = app.policy.rules.iter().find(|rule| rule.id == id) {
-        lines.push(Line::styled(
-            format!(
-                "{} rule · {}",
-                action_name(rule.action),
-                safe_text(&rule.id)
-            ),
-            Style::default().fg(ACCENT),
-        ));
-        lines.extend(scope_lines(&rule.scope));
-        lines.push(Line::from(format!(
-            "Source {} · {} · created UTC ms {}",
-            safe_text(&rule.source),
-            if rule.enabled { "Enabled" } else { "Disabled" },
-            rule.created_at_unix_ms
-        )));
-        lines.push(Line::from(
-            "Saving or viewing rules sends no quit requests.",
-        ));
-    } else {
-        lines.push(Line::from(
-            "This rule was removed. Esc returns to Settings.",
-        ));
-    }
-    if let Some(error) = &app.policy_error {
-        lines.push(Line::from(format!(
-            "Cannot read rules; old rules shown for reference: {}",
-            safe_text(error)
-        )));
-    }
-    render_scrolled(frame, lines, chunks[1], &mut app.detail_scroll);
-    frame.render_widget(
-        Paragraph::new("D Remove rule  ↑↓/PgDn Scroll\nR Reload  Esc Settings  Q Quit")
-            .style(Style::default().add_modifier(Modifier::DIM)),
-        chunks[2],
-    );
-}
-
-fn render_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let chunks = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(4),
-        Constraint::Length(2),
-    ])
-    .split(area);
-    frame.render_widget(
-        Paragraph::new(title("Preview · No quit requests")),
-        chunks[0],
-    );
-    let mut lines = Vec::new();
-    if let Some(plan) = &app.preview_plan {
-        lines.push(Line::styled(
-            format!(
-                "Automatic {} · Needs review {} · Protected {}",
-                plan.automatic_count, plan.pending_count, plan.protected_count
-            ),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ));
-        lines.push(Line::from("Normal quit is disabled. Allow rules affect classification only; zero automatic targets is valid."));
-        lines.push(Line::from(format!(
-            "Plan {} · rule revision {} · created UTC ms {}",
-            safe_text(&plan.plan_id),
-            plan.rule_revision,
-            plan.created_at_unix_ms
-        )));
-        if let Some(sample) = &app.preview_sample {
-            lines.push(Line::from(sample.clone()));
-        }
-        lines.push(Line::from(
-            "This preview freezes the sample and rules. R samples again; resource changes do not update this page.",
-        ));
-        if plan.rule_revision != app.policy.revision {
-            lines.push(Line::styled(
-                "Rules changed; preview uses an old revision. R rebuilds the preview.",
-                Style::default().fg(ACCENT),
-            ));
-        }
-        if app.error.is_some() {
-            lines.push(Line::styled(
-                "Refresh failed; the previous sample is shown.",
-                Style::default().fg(ACCENT),
-            ));
-        }
-        if let Some(error) = &app.policy_error {
-            lines.push(Line::styled(
-                format!(
-                    "Rules unreadable; protected, read-only mode: {}",
-                    safe_text(error)
-                ),
-                Style::default().fg(ACCENT),
-            ));
-        }
-        if let Some(error) = &app.preview_error {
-            lines.push(Line::styled(
-                format!(
-                    "Preview incomplete: {}; conservative reasons shown, no successful preview recorded.",
-                    safe_text(error)
-                ),
-                Style::default().fg(ACCENT),
-            ));
-        }
-        lines.push(Line::from(""));
-        for entry in &plan.entries {
-            lines.push(Line::styled(
-                format!(
-                    "{} · {}",
-                    disposition_name(entry.disposition),
-                    safe_text(&entry.name)
-                ),
-                Style::default().add_modifier(Modifier::BOLD),
-            ));
-            for reason in &entry.reasons {
-                lines.push(Line::from(format!("  · {}", safe_text(reason))));
-            }
-            lines.push(Line::from(""));
-        }
-    } else if let Some(error) = &app.preview_error {
-        lines.push(Line::styled(
-            format!(
-                "Preview incomplete: {}. R samples again to retry.",
-                safe_text(error)
-            ),
-            Style::default().fg(ACCENT),
-        ));
-        lines.push(Line::from(
-            "No new plan or successful preview recorded; no quit requests are sent.",
-        ));
-    } else if app.loading || app.preview_refresh_queued {
-        lines.push(Line::from(
-            "Sampling for a new preview; no quit requests are sent.",
-        ));
-    } else {
-        lines.push(Line::from(
-            "No data for a preview. R samples again; no quit requests are sent.",
-        ));
-    }
-    render_scrolled(frame, lines, chunks[1], &mut app.detail_scroll);
-    frame.render_widget(
-        Paragraph::new(
-            "↑↓/PgDn Scroll  R Rebuild preview\nS Settings  Esc Home  Q Quit · Read-only",
-        )
-        .style(Style::default().add_modifier(Modifier::DIM)),
-        chunks[2],
-    );
-}
-
-fn render_confirmation(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let Some(confirmation) = &app.confirmation else {
-        return;
-    };
-    let mut lines = Vec::new();
-    let heading = match confirmation {
-        RuleConfirmation::Add {
-            action,
-            scope,
-            name,
-        } => {
-            lines.push(Line::from(format!("Target: {}", safe_text(name))));
-            lines.extend(scope_lines(scope));
-            lines.push(Line::from(""));
-            lines.push(Line::from(
-                "This persistent rule requires confirmation. No quit requests are sent. Protect takes priority.",
-            ));
-            format!(" New {} rule ", action_name(*action))
-        }
-        RuleConfirmation::Remove { id, action, scope } => {
-            lines.push(Line::from(format!(
-                "Remove {} rule {}",
-                action_name(*action),
-                safe_text(id)
-            )));
-            lines.extend(scope_lines(scope));
-            lines.push(Line::from(""));
-            lines.push(Line::from(
-                "Remove only this rule; the old configuration is not restored and no application is asked to quit.",
-            ));
-            " Remove selected rule ".into()
-        }
-    };
-    let width = area.width.min(88);
-    let height = area.height.min(18);
-    let popup = Rect::new(
-        area.x + (area.width - width) / 2,
-        area.y + (area.height - height) / 2,
-        width,
-        height,
-    );
-    frame.render_widget(Clear, popup);
-    let block = Block::bordered()
-        .title(heading)
-        .style(Style::default().fg(FOREGROUND).bg(BACKGROUND))
-        .border_style(Style::default().fg(ACCENT));
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
-    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).split(inner);
-    render_scrolled(frame, lines, chunks[0], &mut app.confirmation_scroll);
-    frame.render_widget(
-        Paragraph::new("Enter Save rule  Esc Cancel\n↑↓ / PgDn Review installation scope")
-            .style(Style::default().add_modifier(Modifier::BOLD)),
-        chunks[1],
-    );
 }
 
 fn since_sample(snapshot: &Snapshot) -> String {
@@ -1383,12 +698,6 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
         Page::Home => render_home(frame, app, inner),
         Page::Resources => render_resources(frame, app, inner),
         Page::Detail(id) => render_detail(frame, app, &id, inner),
-        Page::Settings => render_settings(frame, app, inner),
-        Page::RuleDetail(id) => render_rule_detail(frame, app, &id, inner),
-        Page::Preview => render_preview(frame, app, inner),
-    }
-    if app.confirmation.is_some() {
-        render_confirmation(frame, app, inner);
     }
     if let Some(notice) = &app.notice {
         let width = inner.width.min(72);
@@ -1459,18 +768,11 @@ fn home_mascot_rect(app: &App, area: Rect) -> Option<Rect> {
 }
 
 fn render_home_content(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let summary_height = if app.snapshot.is_some()
-        && app.policy_error.is_some()
-        && (app.error.is_some() || app.loading)
-    {
-        6
-    } else {
-        5
-    };
-    let footer_gap = u16::from(area.height > summary_height + 3 + 2);
+    let summary_height = 5;
+    let footer_gap = u16::from(area.height > summary_height + 1 + 2);
     let chunks = Layout::vertical([
         Constraint::Length(summary_height),
-        Constraint::Length(3),
+        Constraint::Length(1),
         Constraint::Length(footer_gap),
         Constraint::Length(2),
         Constraint::Min(0),
@@ -1480,21 +782,13 @@ fn render_home_content(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         Paragraph::new(summary(app, area.width < 76)).wrap(Wrap { trim: false }),
         chunks[0],
     );
-    let pending = app.plan.as_ref().map_or_else(
-        || "Analyzing".into(),
-        |plan| format!("{} · See reasons", plan.pending_count),
-    );
-    let entries = [
-        "1. Preview       Rules & reasons".into(),
-        format!("2. Needs review  {pending}"),
-        "3. Memory        Grouped by application".into(),
-    ];
+    let entries = ["1. Memory        Grouped by application"];
     let list = List::new(entries.map(ListItem::new))
         .highlight_symbol(selection_marker())
         .highlight_style(selection_style());
     frame.render_stateful_widget(list, chunks[1], &mut app.menu);
     frame.render_widget(
-        Paragraph::new("↑↓ / 1–3 Select  Enter Open  R Refresh\nP Preview  S Settings  Q Quit")
+        Paragraph::new("1 Select  Enter Open  R Refresh\nQ Quit")
             .style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)),
         chunks[3],
     );
@@ -1521,10 +815,7 @@ fn summary(app: &App, compact: bool) -> Text<'static> {
                 safe_text(error)
             )
         } else {
-            format!(
-                "Analyzing…\nReading real memory data; {}.",
-                "normal quit is disabled"
-            )
+            "Analyzing…\nReading real memory data.".into()
         };
         return Text::from(message);
     };
@@ -1571,12 +862,6 @@ fn summary(app: &App, compact: bool) -> Text<'static> {
             Style::default().fg(MUTED).add_modifier(Modifier::DIM),
         ));
     }
-    if app.policy_error.is_some() {
-        lines.push(Line::styled(
-            "Rules unreadable · S Settings · Read-only",
-            Style::default().fg(ACCENT),
-        ));
-    }
     Text::from(lines)
 }
 
@@ -1602,7 +887,6 @@ fn search_tail(value: &str, width: u16) -> String {
 
 fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let compact = area.width < 76;
-    let wide = area.width >= 118;
     let chunks = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(2),
@@ -1654,7 +938,7 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         ))
     };
     frame.render_widget(Paragraph::new(search), chunks[2]);
-    let tabs = Tabs::new(["All", "Apps", "AI/Dev", "System", "Review"])
+    let tabs = Tabs::new(["All", "Apps", "AI/Dev", "System"])
         .select(app.filter.index())
         .highlight_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
         .divider(" ")
@@ -1677,8 +961,6 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             "Read failed. R retries."
         } else if !app.query.is_empty() {
             "No matches in this filter.\n/ Edit search · Esc Clear search"
-        } else if app.filter == Filter::Pending {
-            "No objects need review in this preview.\nSee All for protected objects and their reasons."
         } else if app.filter == Filter::Ai {
             "No reliable developer tool installation evidence matched this sample.\nUncovered objects remain in All; this does not prove there are no AI tasks."
         } else {
@@ -1694,14 +976,11 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         let rows: Vec<_> = groups
             .iter()
             .map(|group| {
-                let mut values = if compact {
+                let values = if compact {
                     vec![
                         safe_text(&group.name),
                         display_memory(&group.memory_bytes, true),
                         group.process_ids.len().to_string(),
-                        app.entry(&group.id)
-                            .map_or("Unclassified", |entry| disposition_name(entry.disposition))
-                            .into(),
                     ]
                 } else {
                     vec![
@@ -1710,49 +989,32 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                         group.process_ids.len().to_string(),
                         category_name(group.category).into(),
                         safe_text(&group.metric_kind),
-                        app.entry(&group.id)
-                            .map_or("Unclassified", |entry| disposition_name(entry.disposition))
-                            .into(),
                     ]
                 };
-                if wide {
-                    values.push(
-                        app.entry(&group.id)
-                            .and_then(|entry| entry.reasons.first())
-                            .map(|reason| safe_text(reason))
-                            .unwrap_or_else(|| "Awaiting classification".into()),
-                    );
-                }
                 Row::new(values)
             })
             .collect();
-        let (mut header, mut widths) = if compact {
+        let (header, widths) = if compact {
             (
-                vec!["Name", "Memory", "Procs", "State"],
+                vec!["Name", "Memory", "Procs"],
                 vec![
                     Constraint::Min(10),
                     Constraint::Length(9),
                     Constraint::Length(5),
-                    Constraint::Length(12),
                 ],
             )
         } else {
             (
-                vec!["Name", "Memory", "Procs", "Type", "Metric", "State"],
+                vec!["Name", "Memory", "Procs", "Type", "Metric"],
                 vec![
                     Constraint::Min(16),
                     Constraint::Length(12),
                     Constraint::Length(5),
                     Constraint::Length(11),
                     Constraint::Length(12),
-                    Constraint::Length(12),
                 ],
             )
         };
-        if wide {
-            header.push("Reason");
-            widths.push(Constraint::Min(26));
-        }
         let table = Table::new(rows, widths)
             .header(Row::new(header).style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)))
             .row_highlight_style(selection_style())
@@ -1786,15 +1048,8 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         "Name"
     };
     let note = if app.query.is_empty() {
-        let explanation = app
-            .selected_group
-            .as_ref()
-            .and_then(|id| app.entry(id))
-            .and_then(|entry| entry.reasons.first())
-            .map(|reason| format!("Reason: {}", safe_text(reason)))
-            .unwrap_or_else(|| {
-                "Group sum; different metrics stay separate. This is not recoverable memory.".into()
-            });
+        let explanation =
+            "Group sum; different metrics stay separate. This is not recoverable memory.";
         format!(
             "{sort} · {:.1}s refresh · {explanation}",
             app.refresh_interval.as_secs_f64()
@@ -1805,9 +1060,8 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             app.refresh_interval.as_secs_f64()
         )
     };
-    let footer = format!(
-        "↑↓ Select  Enter Details  Tab Filter\nO Sort R Refresh S Settings {esc} Q Quit\n{note}",
-    );
+    let footer =
+        format!("↑↓ Select  Enter Details  Tab Filter\nO Sort R Refresh {esc} Q Quit\n{note}",);
     frame.render_widget(
         Paragraph::new(footer).style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)),
         chunks[5],
@@ -1815,16 +1069,6 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
 }
 
 fn process_detail(process: &ProcessInfo) -> Vec<Line<'static>> {
-    let protection = if process.protection_reasons.is_empty() {
-        "No collection protection marker; use preview classification and execution rechecks".into()
-    } else {
-        process
-            .protection_reasons
-            .iter()
-            .map(|reason| safe_text(reason))
-            .collect::<Vec<_>>()
-            .join("; ")
-    };
     let attribution = &process.attribution;
     let application = attribution.application.as_ref();
     let mut lines = vec![
@@ -1873,7 +1117,6 @@ fn process_detail(process: &ProcessInfo) -> Vec<Line<'static>> {
             safe_text(&attribution.confidence)
         )),
         Line::from(safe_text(&attribution.explanation)),
-        Line::from(format!("Protection / limits {protection}")),
     ];
     if let Some(application) = application {
         lines.push(Line::from(format!(
@@ -1922,9 +1165,6 @@ fn process_detail(process: &ProcessInfo) -> Vec<Line<'static>> {
         )));
         lines.push(Line::from("The label explains attribution, not task completion or permission to stop automatically."));
     }
-    lines.push(Line::from(
-        "Actions: read-only; normal quit is disabled for this instance. Ports: unverified.",
-    ));
     lines.push(Line::from(""));
     lines
 }
@@ -1957,26 +1197,6 @@ fn render_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
             )));
             lines.push(Line::from(safe_text(&group.explanation)));
             lines.push(Line::from(since_sample(snapshot)));
-            if let Some(entry) = app.entry(id) {
-                lines.push(Line::styled(
-                    format!("Preview state {}", disposition_name(entry.disposition)),
-                    Style::default().fg(ACCENT),
-                ));
-                for reason in &entry.reasons {
-                    lines.push(Line::from(format!("· {}", safe_text(reason))));
-                }
-                if !entry.matched_rule_ids.is_empty() {
-                    lines.push(Line::from(format!(
-                        "Matched rules {}",
-                        entry
-                            .matched_rule_ids
-                            .iter()
-                            .map(|id| safe_text(id))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )));
-                }
-            }
             lines.push(Line::from(
                 "Group sum is not guaranteed freed memory. Refresh on demand.",
             ));
@@ -2014,10 +1234,8 @@ fn render_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
     app.detail_scroll = app.detail_scroll.min(max_scroll);
     frame.render_widget(paragraph.scroll((app.detail_scroll, 0)), chunks[1]);
     frame.render_widget(
-        Paragraph::new(
-            "A Allow  P Protect  ↑↓/PgDn Scroll\nR Refresh  S Settings  Esc Back  Q Quit",
-        )
-        .style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)),
+        Paragraph::new("↑↓/PgDn Scroll\nR Refresh  Esc Back  Q Quit")
+            .style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)),
         chunks[2],
     );
 }
@@ -2041,7 +1259,7 @@ mod tests {
         };
         let id = identity.object_id();
         Snapshot {
-            schema_version: 1,
+            schema_version: crate::model::SCHEMA_VERSION,
             sampled_at_unix_ms: 1000,
             collected_in_ms: 12,
             system: SystemMemory {
@@ -2070,8 +1288,6 @@ mod tests {
                     confidence: "high".into(),
                     explanation: "Verified process".into(),
                 },
-                protection_reasons: vec!["frontmost application".into()],
-                quit_supported: false,
             }],
             groups: vec![OccupancyGroup {
                 id: "group".into(),
@@ -2118,31 +1334,6 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    struct TestStore(Store);
-    impl TestStore {
-        fn new() -> Self {
-            static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            Self(Store::at(std::env::temp_dir().join(format!(
-                "bree-tui-test-{}-{sequence}",
-                std::process::id()
-            ))))
-        }
-        fn app(&self) -> App {
-            let mut app = App::new(false);
-            app.store = Some(self.0.clone());
-            app.reload_policy();
-            app
-        }
-    }
-    impl Drop for TestStore {
-        fn drop(&mut self) {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(self.0.root(), std::fs::Permissions::from_mode(0o700));
-            let _ = std::fs::remove_dir_all(self.0.root());
-        }
-    }
-
     fn scoped_snapshot(installation: &str) -> Snapshot {
         let mut sample = snapshot();
         let process = &mut sample.processes[0];
@@ -2150,7 +1341,6 @@ mod tests {
         process.executable_path = Some(format!(
             "/Applications/{installation}.app/Contents/MacOS/{installation}"
         ));
-        process.protection_reasons.clear();
         process.attribution = Attribution {
             application: Some(Application {
                 bundle_id: Some("com.example.fixture".into()),
@@ -2169,27 +1359,20 @@ mod tests {
     }
 
     #[test]
-    fn initial_focus_and_read_only_preview_are_safe() {
+    fn initial_focus_opens_memory_and_returns_home() {
         let mut app = App::new(false);
-        assert_eq!(app.menu.selected(), Some(2));
-        let (text, _) = screen(&mut app, 90, 24);
+        assert_eq!(app.menu.selected(), Some(0));
+        let (text, _) = screen(&mut app, 48, 16);
         assert!(text.contains("Analyzing"));
-        assert!(text.contains("> 3. Memory"));
-        assert!(text.contains("1. Preview       Rules & reasons"));
+        assert!(text.contains("> 1. Memory"));
         app.handle(key(KeyCode::Char('1')));
         assert!(matches!(
             app.handle(key(KeyCode::Enter)),
             InputResult::Continue
         ));
-        assert_eq!(app.page, Page::Preview);
-
-        assert!(app.confirmation.is_none());
-        assert!(app.notice.is_none());
+        assert_eq!(app.page, Page::Resources);
         app.handle(key(KeyCode::Esc));
-        app.handle(key(KeyCode::Char('p')));
-        assert_eq!(app.page, Page::Preview);
-        let (text, _) = screen(&mut app, 90, 24);
-        assert!(text.contains("No quit requests"));
+        assert_eq!(app.page, Page::Home);
     }
 
     #[test]
@@ -2203,7 +1386,7 @@ mod tests {
         let (text, _) = screen(&mut app, 120, 40);
         assert!(text.contains("PID 123"));
         assert!(text.contains("私有路径"));
-        assert!(text.contains("frontmost application"));
+        assert!(text.contains("Verified process"));
         app.handle(key(KeyCode::Esc));
         assert_eq!(app.page, Page::Resources);
     }
@@ -2261,15 +1444,15 @@ mod tests {
     }
 
     #[test]
-    fn pending_uses_shared_policy_and_home_has_no_periodic_collection() {
+    fn home_stays_idle_and_resources_refresh_periodically() {
         let mut app = App::new(false);
         app.received(Ok(snapshot()));
         app.sampled = Some(Instant::now() - Duration::from_secs(5));
         assert!(!app.should_refresh(Duration::from_secs(2)));
-        app.handle(key(KeyCode::Char('2')));
+        app.handle(key(KeyCode::Char('1')));
         app.handle(key(KeyCode::Enter));
         let (text, _) = screen(&mut app, 90, 24);
-        assert!(text.contains("No objects need review"));
+        assert!(text.contains("bree Memory"));
         assert!(app.should_refresh(Duration::from_secs(2)));
         app.loading = true;
         assert!(!app.should_refresh(Duration::from_secs(2)));
@@ -2304,7 +1487,7 @@ mod tests {
         assert!(app.detail_scroll > 0, "narrow viewport needs scrolling");
         let bottom = buffer_text(terminal.backend().buffer());
         assert!(
-            bottom.contains("unverified"),
+            bottom.contains("CPU 1.0%"),
             "bottom retains actual detail rows"
         );
         let last_scroll = app.detail_scroll;
@@ -2377,8 +1560,7 @@ mod tests {
 
     #[test]
     fn terminal_theme_inherits_background_and_normal_text_even_in_popups() {
-        let store = TestStore::new();
-        let mut app = store.app();
+        let mut app = App::new(false);
         app.color_depth = ColorDepth::None;
         app.received(Ok(scoped_snapshot("Fixture")));
         for (width, height) in [(100, 32), (60, 20), (30, 10)] {
@@ -2393,9 +1575,9 @@ mod tests {
             );
         }
         app.page = Page::Detail(app.snapshot.as_ref().unwrap().groups[0].id.clone());
-        app.handle(key(KeyCode::Char('a')));
+        app.notice = Some("Inspection notice".into());
         let (text, terminal) = screen(&mut app, 100, 32);
-        assert!(text.contains("Save rule"));
+        assert!(text.contains("Inspection notice"));
         assert!(
             terminal
                 .backend()
@@ -2435,20 +1617,13 @@ mod tests {
                 width >= MASCOT_MIN_WIDTH && height >= WORDMARK_MIN_HEIGHT,
                 "{width}x{height}: {text}"
             );
-            for label in [
-                "1. Preview       Rules & reasons",
-                "2. Needs review",
-                "> 3. Memory",
-                "S Settings",
-                "Q Quit",
-            ] {
+            for label in ["> 1. Memory", "Q Quit"] {
                 assert!(
                     text.contains(label),
                     "{width}x{height} lacks {label}: {text}"
                 );
             }
             assert!(!text.contains("-.-"));
-            assert!(!text.contains("Rules and preview"));
             assert!(!text.contains("Understand memory"));
             let buffer = terminal.backend().buffer();
             assert!(
@@ -2515,7 +1690,6 @@ mod tests {
                         app.received(Err(
                             "Long refresh failure with details that must not hide the menu".into(),
                         ));
-                        app.policy_error = Some("Rules unavailable".into());
                     }
                     _ => {}
                 }
@@ -2526,15 +1700,8 @@ mod tests {
                 assert_eq!(buffer[(25, 4)].symbol(), "█");
                 assert_eq!(buffer[(25, 4)].fg, ACCENT);
                 assert!(buffer.content.iter().any(|cell| cell.bg != Color::Reset));
-                assert_eq!(app.menu.selected(), Some(2));
-                for label in [
-                    "1. Preview",
-                    "2. Needs review",
-                    "> 3. Memory",
-                    "R Refresh",
-                    "S Settings",
-                    "Q Quit",
-                ] {
+                assert_eq!(app.menu.selected(), Some(0));
+                for label in ["> 1. Memory", "R Refresh", "Q Quit"] {
                     assert!(
                         text.contains(label),
                         "depth {depth:?}, state {state}: missing {label}\n{text}"
@@ -2546,11 +1713,7 @@ mod tests {
                         text.contains("Read failed") && text.contains("Unknown memory is not zero")
                     ),
                     2 => assert!(text.contains("Memory pressure") && text.contains("8.00 GiB")),
-                    3 => assert!(
-                        text.contains("Denied")
-                            && text.contains("Previous data")
-                            && text.contains("Rules unreadable")
-                    ),
+                    3 => assert!(text.contains("Denied") && text.contains("Previous data")),
                     _ => unreachable!(),
                 }
             }
@@ -2588,7 +1751,7 @@ mod tests {
                 terminal.backend().buffer(),
                 full.then(|| Rect::new(2, 1, brand::WIDTH, brand::HEIGHT)),
             );
-            assert!(text.contains("> 3. Memory") && text.contains("Q Quit"));
+            assert!(text.contains("> 1. Memory") && text.contains("Q Quit"));
         }
         let (_, mut terminal) = screen(&mut app, 60, 26);
         terminal.backend_mut().resize(60, 25);
@@ -2598,7 +1761,7 @@ mod tests {
         terminal.backend_mut().resize(48, 16);
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         assert_mascot_canvas(terminal.backend().buffer(), None);
-        assert!(buffer_text(terminal.backend().buffer()).contains("> 3. Memory"));
+        assert!(buffer_text(terminal.backend().buffer()).contains("> 1. Memory"));
         terminal.backend_mut().resize(60, 26);
         terminal.draw(|frame| render(frame, &mut app)).unwrap();
         assert_mascot_canvas(
@@ -2630,11 +1793,11 @@ mod tests {
                     .expect("memory overview stays on the left baseline");
                 let menu = lines
                     .iter()
-                    .position(|line| line.starts_with("  > 3. Memory"))
+                    .position(|line| line.starts_with("  > 1. Memory"))
                     .expect("selection marker stays on the left baseline");
                 let footer = lines
                     .iter()
-                    .position(|line| line.starts_with("  ↑↓ / 1–3 Select"))
+                    .position(|line| line.starts_with("  1 Select"))
                     .expect("navigation stays on the left baseline");
                 assert!(summary < menu && menu < footer);
                 assert!(footer - menu <= 2, "navigation follows the menu: {text}");
@@ -2662,18 +1825,13 @@ mod tests {
         app.received(Err(
             "refresh failed with a long permission error and private path".into(),
         ));
-        app.policy_error = Some("rules cannot be read".into());
         let (text, _) = screen(&mut app, 48, 16);
         for label in [
             "Denied",
             "Unknown",
             "Previous data",
-            "Rules unreadable",
-            "1. Preview",
-            "2. Needs review",
-            "> 3. Memory",
+            "> 1. Memory",
             "R Refresh",
-            "S Settings",
             "Q Quit",
         ] {
             assert!(text.contains(label), "missing {label}: {text}");
@@ -2681,30 +1839,17 @@ mod tests {
         assert!(!text.contains("Used 0"));
         app.page = Page::Resources;
         let (text, _) = screen(&mut app, 48, 16);
-        for label in [
-            "Previous data",
-            "R Refresh",
-            "S Settings",
-            "Esc Home",
-            "Q Quit",
-        ] {
+        for label in ["Previous data", "R Refresh", "Esc Home", "Q Quit"] {
             assert!(text.contains(label), "missing {label}: {text}");
         }
     }
 
     #[test]
     fn compact_secondary_pages_keep_their_navigation_and_inherited_colors() {
-        let store = TestStore::new();
-        let mut app = store.app();
+        let mut app = App::new(false);
         app.received(Ok(scoped_snapshot("Fixture")));
         let detail = app.snapshot.as_ref().unwrap().groups[0].id.clone();
-        for page in [
-            Page::Settings,
-            Page::Resources,
-            Page::Detail(detail),
-            Page::RuleDetail("missing".into()),
-            Page::Preview,
-        ] {
+        for page in [Page::Resources, Page::Detail(detail)] {
             app.page = page.clone();
             let (text, terminal) = screen(&mut app, 48, 16);
             for label in ["Esc", "Q Quit"] {
@@ -2721,10 +1866,10 @@ mod tests {
             );
         }
         app.page = Page::Detail(app.snapshot.as_ref().unwrap().groups[0].id.clone());
-        app.handle(key(KeyCode::Char('a')));
+        app.notice = Some("Inspection notice".into());
         let (text, _) = screen(&mut app, 48, 16);
-        assert!(text.contains("Enter Save rule"));
-        assert!(text.contains("Esc Cancel"));
+        assert!(text.contains("Inspection notice"));
+        assert!(text.contains("Enter / Esc Back"));
     }
 
     fn input(app: &mut App, value: &str) {
@@ -2748,7 +1893,7 @@ mod tests {
         assert_eq!(app.search_editor.as_ref().unwrap().draft, "qrsa");
         assert_eq!(app.groups().len(), 1);
         assert_eq!(app.selected_group, selected);
-        assert!(app.confirmation.is_none());
+
         app.handle(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
         input(&mut app, "  中文应用字  ");
         app.handle(key(KeyCode::Backspace));
@@ -2888,7 +2033,6 @@ mod tests {
             "Tab Filter",
             "O Sort",
             "R Refresh",
-            "S Settings",
             "Q Quit",
         ] {
             assert!(text.contains(label), "missing {label}: {text}");
@@ -2940,172 +2084,6 @@ mod tests {
             app.snapshot.as_ref().unwrap().processes[0].id,
             old_process_id
         );
-        assert!(app.confirmation.is_none());
-    }
-
-    #[test]
-    fn details_require_exact_scope_confirmation_and_cancel_does_not_save() {
-        let store = TestStore::new();
-        let mut app = store.app();
-        let sample = scoped_snapshot("Fixture");
-        let id = sample.groups[0].id.clone();
-        app.received(Ok(sample));
-        app.page = Page::Detail(id);
-        app.handle(key(KeyCode::Char('a')));
-        let (text, _) = screen(&mut app, 110, 32);
-        assert!(text.contains("com.example.fixture"));
-        assert!(text.contains("/Applications/Fixture.app/Contents/MacOS/Fixture"));
-        assert!(text.contains("No quit requests are sent"));
-        app.handle(key(KeyCode::Esc));
-        assert!(store.0.load().unwrap().rules.is_empty());
-        assert!(
-            !store.0.root().exists(),
-            "cancelled rule does not create storage"
-        );
-        app.handle(key(KeyCode::Char('p')));
-        app.handle(key(KeyCode::Enter));
-        let state = store.0.load().unwrap();
-        assert_eq!(state.rules.len(), 1);
-        assert_eq!(state.rules[0].action, RuleAction::Protect);
-        assert_eq!(app.plan.as_ref().unwrap().protected_count, 1);
-    }
-
-    #[test]
-    fn settings_view_and_revoke_only_selected_rule_preserve_newer_changes() {
-        let store = TestStore::new();
-        let first = scoped_snapshot("First");
-        let second = scoped_snapshot("Second");
-        let third = scoped_snapshot("Third");
-        let scope = |sample: &Snapshot| scope_for_group(sample, &sample.groups[0].id).unwrap();
-        store
-            .0
-            .change(RuleChange::Add {
-                action: RuleAction::Protect,
-                scope: scope(&first),
-            })
-            .unwrap();
-        store
-            .0
-            .change(RuleChange::Add {
-                action: RuleAction::Allow,
-                scope: scope(&second),
-            })
-            .unwrap();
-        let mut app = store.app();
-        app.handle(key(KeyCode::Char('s')));
-        app.handle(key(KeyCode::Enter));
-        let (text, _) = screen(&mut app, 110, 30);
-        assert!(text.contains("/Applications/First.app/Contents/MacOS/First"));
-        app.handle(key(KeyCode::Char('d')));
-        app.handle(key(KeyCode::Esc));
-        assert_eq!(store.0.load().unwrap().rules.len(), 2);
-        app.handle(key(KeyCode::Char('d')));
-        store
-            .0
-            .change(RuleChange::Add {
-                action: RuleAction::Protect,
-                scope: scope(&third),
-            })
-            .unwrap();
-        app.handle(key(KeyCode::Enter));
-        let state = store.0.load().unwrap();
-        assert_eq!(state.rules.len(), 2);
-        assert_eq!(state.revision, 4);
-        assert!(
-            !state
-                .rules
-                .iter()
-                .any(|rule| rule.scope.bundle_path.contains("First.app"))
-        );
-        assert!(
-            state
-                .rules
-                .iter()
-                .any(|rule| rule.scope.bundle_path.contains("Second.app"))
-        );
-        assert!(
-            state
-                .rules
-                .iter()
-                .any(|rule| rule.scope.bundle_path.contains("Third.app"))
-        );
-    }
-
-    #[test]
-    fn corrupt_state_during_confirmation_is_preserved_and_disables_save() {
-        let store = TestStore::new();
-        let mut app = store.app();
-        let sample = scoped_snapshot("Fixture");
-        let scope = scope_for_group(&sample, &sample.groups[0].id).unwrap();
-        store
-            .0
-            .change(RuleChange::Add {
-                action: RuleAction::Protect,
-                scope,
-            })
-            .unwrap();
-        app.reload_policy();
-        let id = sample.groups[0].id.clone();
-        app.received(Ok(sample));
-        app.page = Page::Detail(id);
-        app.handle(key(KeyCode::Char('a')));
-        let path = store.0.root().join("state.json");
-        std::fs::write(&path, b"broken configuration").unwrap();
-        app.handle(key(KeyCode::Enter));
-        assert!(app.policy_error.is_some());
-        assert_eq!(
-            app.policy.rules.len(),
-            1,
-            "preserve the last read-only state"
-        );
-        assert_eq!(std::fs::read(&path).unwrap(), b"broken configuration");
-        app.handle(key(KeyCode::Enter));
-        app.handle(key(KeyCode::Char('s')));
-        let (text, _) = screen(&mut app, 100, 30);
-        assert!(text.contains("read-only"));
-        app.handle(key(KeyCode::Char('d')));
-        assert!(app.confirmation.is_none());
-        assert_eq!(std::fs::read(&path).unwrap(), b"broken configuration");
-    }
-
-    #[test]
-    fn preview_has_zero_automatic_candidates_and_stays_idle_with_frozen_revision() {
-        let store = TestStore::new();
-        let mut app = store.app();
-        app.received(Ok(scoped_snapshot("Fixture")));
-        app.open_preview();
-        let plan = app.preview_plan.as_ref().unwrap();
-        assert!(plan.read_only);
-        assert_eq!(plan.automatic_count, 0);
-        assert_eq!(plan.pending_count, 1);
-        assert_eq!(plan.rule_revision, 0);
-        let (text, _) = screen(&mut app, 100, 30);
-        assert!(text.contains("Automatic 0"));
-        assert!(text.contains("Sample UTC"));
-        assert!(
-            text.split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .contains("no user allow rule")
-        );
-        assert!(!app.should_refresh(Duration::ZERO));
-        assert!(
-            std::fs::read_to_string(store.0.root().join("journal.jsonl"))
-                .unwrap()
-                .contains("dry_run_prepared")
-        );
-        let snapshot = scoped_snapshot("Fixture");
-        store
-            .0
-            .change(RuleChange::Add {
-                action: RuleAction::Protect,
-                scope: scope_for_group(&snapshot, &snapshot.groups[0].id).unwrap(),
-            })
-            .unwrap();
-        app.reload_policy();
-        let (text, _) = screen(&mut app, 100, 30);
-        assert!(text.contains("preview uses an old revision"));
-        assert_eq!(app.preview_plan.as_ref().unwrap().rule_revision, 0);
     }
 
     #[test]
@@ -3123,209 +2101,6 @@ mod tests {
         let (text, _) = screen(&mut app, 110, 45);
         assert!(text.contains("Developer label Codex CLI"));
         assert!(text.contains("not task completion"));
-    }
-
-    #[test]
-    fn save_failure_preserves_in_memory_and_persisted_rules() {
-        use std::os::unix::fs::PermissionsExt;
-        let store = TestStore::new();
-        let sample = scoped_snapshot("Fixture");
-        let scope = scope_for_group(&sample, &sample.groups[0].id).unwrap();
-        store
-            .0
-            .change(RuleChange::Add {
-                action: RuleAction::Protect,
-                scope,
-            })
-            .unwrap();
-        let mut app = store.app();
-        app.page = Page::Detail(sample.groups[0].id.clone());
-        app.received(Ok(sample));
-        app.handle(key(KeyCode::Char('a')));
-        let original = std::fs::read(store.0.root().join("state.json")).unwrap();
-        std::fs::set_permissions(store.0.root(), std::fs::Permissions::from_mode(0o500)).unwrap();
-        app.handle(key(KeyCode::Enter));
-        assert!(app.policy_error.is_some());
-        assert_eq!(app.policy.rules.len(), 1);
-        assert_eq!(app.policy.revision, 1);
-        assert_eq!(
-            std::fs::read(store.0.root().join("state.json")).unwrap(),
-            original
-        );
-        assert!(app.notice.as_deref().unwrap().contains("save failed"));
-    }
-
-    #[test]
-    fn busy_preview_remains_an_explicit_failure_after_dismissing_notice() {
-        let store = TestStore::new();
-        let _execution = store.0.execution_lock().unwrap();
-        let mut app = store.app();
-        app.received(Ok(scoped_snapshot("Fixture")));
-        app.open_preview();
-        assert!(app.preview_error.is_some());
-        assert_eq!(app.preview_plan.as_ref().unwrap().automatic_count, 0);
-        app.handle(key(KeyCode::Enter));
-        let (text, _) = screen(&mut app, 110, 32);
-        assert!(text.contains("Preview incomplete"));
-        assert!(text.contains("no successful preview recorded"));
-        assert!(!store.0.root().join("journal.jsonl").exists());
-    }
-
-    fn prepared_record_count(store: &Store) -> usize {
-        std::fs::read_to_string(store.root().join("journal.jsonl"))
-            .unwrap_or_default()
-            .lines()
-            .filter(|line| {
-                serde_json::from_str::<serde_json::Value>(line).unwrap()["event"]
-                    == "dry_run_prepared"
-            })
-            .count()
-    }
-
-    #[test]
-    fn late_resource_sample_does_not_replace_frozen_preview_or_append_a_record() {
-        let store = TestStore::new();
-        let mut app = store.app();
-        let sample = scoped_snapshot("Fixture");
-        let scope = scope_for_group(&sample, &sample.groups[0].id).unwrap();
-        let sampled_label = since_sample(&sample);
-        app.received(Ok(sample.clone()));
-        app.page = Page::Resources;
-        app.loading = true; // The resources page already has a request in flight.
-        app.handle(key(KeyCode::Esc));
-        app.handle(key(KeyCode::Char('p')));
-        let frozen = app.preview_plan.as_ref().unwrap().plan_id.clone();
-        assert_eq!(prepared_record_count(&store.0), 1);
-        store
-            .0
-            .change(RuleChange::Add {
-                action: RuleAction::Protect,
-                scope,
-            })
-            .unwrap();
-        let mut late = sample;
-        late.sampled_at_unix_ms = 200_000;
-        late.collected_in_ms = 88;
-        app.received(Ok(late));
-        assert_eq!(app.preview_plan.as_ref().unwrap().plan_id, frozen);
-        assert_eq!(app.preview_plan.as_ref().unwrap().rule_revision, 0);
-        assert_eq!(store.0.load().unwrap().revision, 1);
-        assert_eq!(app.preview_sample.as_deref(), Some(sampled_label.as_str()));
-        assert_eq!(prepared_record_count(&store.0), 1);
-        let (text, _) = screen(&mut app, 110, 32);
-        assert!(text.contains(&sampled_label));
-        assert!(
-            !text.contains("00:03:20"),
-            "the frozen plan must keep its own sample label"
-        );
-    }
-
-    #[test]
-    fn explicit_preview_refresh_retires_old_plan_and_prepares_exactly_once() {
-        let store = TestStore::new();
-        let mut app = store.app();
-        let sample = scoped_snapshot("Fixture");
-        app.received(Ok(sample.clone()));
-        app.open_preview();
-        let old_id = app.preview_plan.as_ref().unwrap().plan_id.clone();
-        store
-            .0
-            .change(RuleChange::Add {
-                action: RuleAction::Protect,
-                scope: scope_for_group(&sample, &sample.groups[0].id).unwrap(),
-            })
-            .unwrap();
-        assert!(matches!(
-            app.handle(key(KeyCode::Char('r'))),
-            InputResult::Refresh
-        ));
-        assert!(app.preview_plan.is_none());
-        assert!(app.preview_sample.is_none());
-        app.loading = true; // The run loop now issues the explicitly requested refresh.
-        let mut fresh = sample.clone();
-        fresh.sampled_at_unix_ms = 300_000;
-        app.received(Ok(fresh));
-        let plan = app.preview_plan.as_ref().unwrap();
-        assert_ne!(plan.plan_id, old_id);
-        assert_eq!(plan.rule_revision, 1);
-        assert_eq!(plan.protected_count, 1);
-        assert_eq!(prepared_record_count(&store.0), 2);
-        app.received(Ok(sample));
-        assert_eq!(prepared_record_count(&store.0), 2);
-        assert!(app.preview_sample.as_deref().unwrap().contains("00:05:00"));
-    }
-
-    #[test]
-    fn preview_refresh_during_collection_waits_then_requests_a_new_sample() {
-        let store = TestStore::new();
-        let mut app = store.app();
-        let sample = scoped_snapshot("Fixture");
-        app.received(Ok(sample.clone()));
-        app.open_preview();
-        app.loading = true;
-        app.handle(key(KeyCode::Char('r')));
-        assert!(app.preview_refresh_queued);
-        assert!(!app.take_queued_preview_refresh());
-        app.received(Ok(sample.clone())); // This was already in flight before R.
-        assert!(app.preview_plan.is_none());
-        assert_eq!(prepared_record_count(&store.0), 1);
-        assert!(app.take_queued_preview_refresh());
-        assert!(
-            !app.take_queued_preview_refresh(),
-            "the fresh request is taken once"
-        );
-        app.loading = true;
-        let mut fresh = sample;
-        fresh.sampled_at_unix_ms = 400_000;
-        app.received(Ok(fresh));
-        assert!(app.preview_sample.as_deref().unwrap().contains("00:06:40"));
-        assert_eq!(prepared_record_count(&store.0), 2);
-    }
-
-    #[test]
-    fn first_sample_initializes_preview_once_and_failed_refresh_has_no_new_plan() {
-        let store = TestStore::new();
-        let mut app = store.app();
-        app.open_preview();
-        assert!(app.preview_plan.is_none());
-        assert_eq!(prepared_record_count(&store.0), 0);
-        app.received(Ok(scoped_snapshot("Fixture")));
-        assert!(app.preview_plan.is_some());
-        assert_eq!(prepared_record_count(&store.0), 1);
-        app.received(Ok(scoped_snapshot("Fixture")));
-        assert_eq!(prepared_record_count(&store.0), 1);
-        app.handle(key(KeyCode::Char('r')));
-        app.received(Err("sample unavailable".into()));
-        assert!(app.preview_plan.is_none());
-        assert!(app.preview_sample.is_none());
-        assert!(
-            app.preview_error
-                .as_deref()
-                .unwrap()
-                .contains("Sampling failed")
-        );
-        assert_eq!(prepared_record_count(&store.0), 1);
-        let (text, _) = screen(&mut app, 110, 32);
-        assert!(text.contains("No new plan or successful preview recorded"));
-        assert!(text.contains("sample unavailable"));
-    }
-
-    #[test]
-    fn home_preview_records_only_a_read_only_plan() {
-        let store = TestStore::new();
-        let mut app = store.app();
-        app.received(Ok(scoped_snapshot("Fixture")));
-        assert_eq!(app.plan.as_ref().unwrap().automatic_count, 0);
-        app.handle(key(KeyCode::Char('1')));
-        app.handle(key(KeyCode::Enter));
-
-        assert!(app.confirmation.is_none());
-        assert_eq!(app.page, Page::Preview);
-        assert!(app.preview_plan.as_ref().unwrap().read_only);
-        assert_eq!(app.preview_plan.as_ref().unwrap().automatic_count, 0);
-        assert_eq!(prepared_record_count(&store.0), 1);
-        let journal = std::fs::read_to_string(store.0.root().join("journal.jsonl")).unwrap();
-        assert_eq!(journal.lines().count(), 1);
     }
 
     #[test]

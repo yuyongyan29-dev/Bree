@@ -6,9 +6,6 @@ impl Backend {
     pub fn new() -> Result<Self, String> {
         Err("This Alpha supports only macOS; the current system is unverified.".into())
     }
-    pub fn current_uid(&self) -> u32 {
-        0
-    }
     pub fn system_memory(&self) -> SystemMemory {
         unreachable!("unsupported platform")
     }

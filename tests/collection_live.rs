@@ -4,7 +4,7 @@ use bree_cli::model::{SCHEMA_VERSION, Validity};
 use std::collections::HashSet;
 
 #[test]
-fn live_snapshot_has_real_core_metrics_conservative_capabilities_and_full_membership() {
+fn live_snapshot_has_real_core_metrics_and_full_membership() {
     let mut collector = Collector::new().unwrap();
     let snapshot = collector.snapshot().unwrap();
     assert_eq!(snapshot.schema_version, SCHEMA_VERSION);
@@ -31,11 +31,6 @@ fn live_snapshot_has_real_core_metrics_conservative_capabilities_and_full_member
     assert!(own.memory_bytes.value.is_some_and(|value| value > 0));
     assert_eq!(own.metric_kind, "rss");
     assert!(own.cpu_one_core_percent.value.is_none());
-    assert!(
-        own.protection_reasons
-            .iter()
-            .any(|reason| reason.contains("Bree itself"))
-    );
     let mut grouped = HashSet::new();
     for group in &snapshot.groups {
         for id in &group.process_ids {
@@ -47,7 +42,6 @@ fn live_snapshot_has_real_core_metrics_conservative_capabilities_and_full_member
     }
     assert_eq!(grouped.len(), snapshot.processes.len());
     for process in &snapshot.processes {
-        assert!(!process.quit_supported);
         if process.memory_bytes.status != Validity::Ok {
             assert_eq!(process.memory_bytes.value, None);
         }

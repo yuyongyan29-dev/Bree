@@ -1,6 +1,5 @@
 //! Narrow, sample-verified development labels. Labels never authorize stopping.
 use crate::model::ProcessInfo;
-use crate::policy::reliable_identity;
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path};
 
@@ -18,7 +17,7 @@ pub struct DevelopmentLabel {
 /// It does not inspect argv, environment variables, parents, ports, or CPU usage.
 /// Confidence describes installation path evidence, not signature or binary integrity.
 pub fn label_process(process: &ProcessInfo) -> Option<DevelopmentLabel> {
-    if !reliable_identity(process) || process.uid != Some(unsafe { libc::geteuid() }) {
+    if !process.reliable_identity() || process.uid != Some(unsafe { libc::geteuid() }) {
         return None;
     }
     let executable = process.executable_path.as_deref()?;
@@ -105,8 +104,6 @@ mod tests {
                 confidence: "unknown".into(),
                 explanation: "test".into(),
             },
-            protection_reasons: vec![],
-            quit_supported: false,
         }
     }
 

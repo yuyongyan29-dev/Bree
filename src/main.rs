@@ -3,10 +3,7 @@ use bree_cli::{
     collect::Collector,
     model::{SCHEMA_VERSION, Snapshot, safe_text},
     output,
-    policy::{CleanupPlan, Disposition, PolicyContext, PolicyState, evaluate},
-    preview,
     query::{GroupSort, compare_groups, group_matches, validate_search},
-    storage::Store,
     tui,
 };
 use clap::{Parser, Subcommand};
@@ -25,7 +22,7 @@ use std::{
     name = "bree",
     version,
     about = "Understand memory usage on your Mac",
-    long_about = "Inspect local memory usage, application rules and previews. Run bree in an interactive terminal to open the menu. Bree does not quit applications in this version."
+    long_about = "Inspect and export local memory usage without saving state. Run bree in an interactive terminal to open the menu. Bree does not quit applications."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -73,13 +70,6 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Preview rule classification; no application is asked to quit
-    Clean {
-        #[arg(long, required = true)]
-        dry_run: bool,
-        #[arg(long)]
-        json: bool,
-    },
     /// Show the GPL-3.0 license or bundled third-party notices offline
     License {
         #[arg(long)]
@@ -94,7 +84,7 @@ fn main() {
     let tty = io::stdin().is_terminal() && io::stdout().is_terminal();
     if cli.command.is_none() && !tty {
         let code = match output::write_text(
-            "bree · Alpha\nUsage: bree status | list | inspect <id> | watch | doctor | clean --dry-run | license\nRun bree in an interactive terminal to open the menu.",
+            "bree · Alpha\nUsage: bree status | list | inspect <id> | watch | doctor | license\nRun bree in an interactive terminal to open the menu.",
         ) {
             Ok(()) => 0,
             Err(_) => 1,
@@ -116,8 +106,7 @@ fn main() {
         | Some(Command::Inspect { json, .. })
         | Some(Command::Watch { json, .. })
         | Some(Command::Doctor { json })
-        | Some(Command::License { json, .. })
-        | Some(Command::Clean { json, .. }) => *json,
+        | Some(Command::License { json, .. }) => *json,
         None => false,
     };
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -217,14 +206,9 @@ fn execute(
                 break;
             }
             if json {
-                output::write_json(&snapshot_json(&snapshot, &observe_rules(&snapshot)))?;
+                output::write_json(&snapshot_json(&snapshot))?;
             } else {
-                let observation = observe_rules(&snapshot);
-                output::write_text(&format!(
-                    "{}\n{}",
-                    output::status_text(&snapshot),
-                    policy_summary(&observation)
-                ))?;
+                output::write_text(&output::status_text(&snapshot))?;
             }
             n += 1;
             if count.is_some_and(|limit| n >= limit) {
@@ -241,24 +225,19 @@ fn execute(
     if cancelled.load(Ordering::Relaxed) {
         return Ok(130);
     }
-    let observation = observe_rules(&snapshot);
     match command.expect("interactive handled above") {
         Command::Status { json: true } => output::write_json(
-            &json!({"schema_version":SCHEMA_VERSION,"sampled_at_unix_ms":snapshot.sampled_at_unix_ms,"collected_in_ms":snapshot.collected_in_ms,"system":snapshot.system,"coverage":snapshot.coverage,"diagnostics":snapshot.diagnostics,"policy_summary":{"automatic":observation.plan.automatic_count,"pending":observation.plan.pending_count,"protected":observation.plan.protected_count,"revision":observation.plan.rule_revision},"policy_state_valid":observation.error.is_none(),"policy_error":observation.error}),
+            &json!({"schema_version":SCHEMA_VERSION,"sampled_at_unix_ms":snapshot.sampled_at_unix_ms,"collected_in_ms":snapshot.collected_in_ms,"system":snapshot.system,"coverage":snapshot.coverage,"diagnostics":snapshot.diagnostics}),
         ),
-        Command::Status { json: false } => output::write_text(&format!(
-            "{}\n{}",
-            output::status_text(&snapshot),
-            policy_summary(&observation)
-        )),
+        Command::Status { json: false } => output::write_text(&output::status_text(&snapshot)),
         Command::List {
             json,
             limit,
             search,
             sort,
         } => {
-            // This display view keeps the complete process sample and evaluated plan.
-            // Filtering cannot change ownership, policy counts or cleanup candidates.
+            // This display view keeps the complete process sample and coverage.
+            // Filtering cannot change ownership.
             let mut display = snapshot.clone();
             display.groups.retain(|group| group_matches(&snapshot, group, &search));
             display.groups.sort_by(|a, b| compare_groups(a, b, sort));
@@ -266,7 +245,7 @@ fn execute(
             let shown = limit.unwrap_or(matched).min(matched);
             if json {
                 display.groups.truncate(shown);
-                let mut exported = snapshot_json(&display, &observation);
+                let mut exported = snapshot_json(&display);
                 exported["view"] = json!({
                     "search":search,"sort":sort,"total_groups":snapshot.groups.len(),
                     "matched_groups":matched,"shown_groups":shown
@@ -278,7 +257,7 @@ fn execute(
                     snapshot.groups.len(),
                     match sort { GroupSort::Memory => "memory", GroupSort::Name => "name" },
                     if search.is_empty() { "(all)".into() } else { format!("{search:?}") },
-                    classified_list_text(&display, limit, &observation),
+                    list_text(&display, limit),
                     if matched == 0 { "No matching groups in this sample. Try another name, bundle ID or exact PID.\n" } else { "" }
                 ))
             }
@@ -286,25 +265,6 @@ fn execute(
         Command::Inspect { id, json } => {
             let exported = output::export_snapshot(&snapshot, true);
             let mut text = output::inspect_text(&snapshot, &id)?;
-            let entry = observation.plan.entries.iter().find(|entry| {
-                entry.group_id == id
-                    || snapshot
-                        .groups
-                        .iter()
-                        .any(|group| group.id == entry.group_id && group.process_ids.contains(&id))
-            });
-            if let Some(entry) = entry {
-                text.push_str(&format!(
-                    "\nPolicy: {}\n{}\n",
-                    disposition_text(entry.disposition),
-                    entry
-                        .reasons
-                        .iter()
-                        .map(|reason| format!("· {}", safe_text(reason)))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                ));
-            }
             if json {
                 let group = exported.groups.iter().find(|g| g.id == id);
                 let processes: Vec<_> = exported
@@ -312,7 +272,7 @@ fn execute(
                     .iter()
                     .filter(|p| p.id == id || group.is_some_and(|g| g.process_ids.contains(&p.id)))
                     .collect();
-                let mut report = json!({"schema_version":SCHEMA_VERSION,"sampled_at_unix_ms":snapshot.sampled_at_unix_ms,"group":group,"processes":processes,"policy":entry,"policy_state_valid":observation.error.is_none(),"policy_error":observation.error});
+                let mut report = json!({"schema_version":SCHEMA_VERSION,"sampled_at_unix_ms":snapshot.sampled_at_unix_ms,"group":group,"processes":processes});
                 add_labels(&mut report, &snapshot);
                 output::write_json(&report)
             } else {
@@ -334,12 +294,6 @@ fn execute(
             }
         }
         Command::Doctor { json } => {
-            let storage = match Store::from_env() {
-                Ok(store) => {
-                    scrub_paths(serde_json::to_value(store.probe()).map_err(|e| e.to_string())?)
-                }
-                Err(error) => json!({"error":safe_text(&error),"write_status":"not_probed"}),
-            };
             let report = json!({
                 "schema_version": SCHEMA_VERSION,
                 "version": env!("CARGO_PKG_VERSION"),
@@ -350,18 +304,12 @@ fn execute(
                 "diagnostics": snapshot.diagnostics,
                 "capabilities": {
                     "read_only": true,
-                    "rules_enabled": true,
-                    "dry_run_enabled": true,
                     "ai_attribution_enabled": true,
                     "background_service": false
                 },
-                "rule_storage": storage,
-                "policy_state_valid": observation.error.is_none(),
-                "policy_error": observation.error,
                 "notes": [
-                    "Rules and dry-run previews are available. Bree does not quit applications.",
+                    "Bree inspects and exports memory usage without saving state or quitting applications.",
                     "Developer labels cover only native Claude installations under ~/.local/share/claude/versions/<numeric version> and Codex App CLI paths. They do not establish project ownership, task completion, sharing or permission to stop a task.",
-                    "Permission bits do not guarantee a successful write; storage writes may still fail.",
                     "Each supported environment requires testing. A local run does not verify other system versions.",
                     "Bree does not request root, Full Disk Access, Accessibility or Automation permissions."
                 ]
@@ -370,10 +318,8 @@ fn execute(
                 output::write_json(&report)
             } else {
                 output::write_text(&format!(
-                    "{}\n{}\n\nCapabilities: rules, dry-run and limited developer-tool labels. Application quitting, AI task reclamation and background services are disabled.\n{}\n{}",
+                    "{}\n\nCapabilities: read-only memory inspection and limited developer-tool labels. Bree saves no state and does not quit applications. Background services are disabled.\n{}",
                     output::status_text(&snapshot),
-                    policy_summary(&observation),
-                    storage_text(&report["rule_storage"]),
                     snapshot
                         .coverage
                         .notes
@@ -385,95 +331,14 @@ fn execute(
                 ))
             }
         }
-        Command::Clean {
-            dry_run: _,
-            json,
-            ..
-        } => {
-            let store = Store::from_env()?;
-            let plan = preview::prepare(&store, &snapshot)?;
-            if json {
-                output::write_json(&plan)
-            } else {
-                output::write_text(&format!(
-                    "Bree cleanup preview · Read-only; no requests sent\nPolicy version {} · revision {} · {}\nAutomatic {} · Needs review {} · Protected {}\n{}",
-                    plan.policy_version,
-                    plan.rule_revision,
-                    plan.plan_id,
-                    plan.automatic_count,
-                    plan.pending_count,
-                    plan.protected_count,
-                    plan.entries
-                        .iter()
-                        .map(|entry| format!(
-                            "{}\t{}\t{}",
-                            disposition_text(entry.disposition),
-                            safe_text(&entry.name),
-                            entry
-                                .reasons
-                                .iter()
-                                .map(|reason| safe_text(reason))
-                                .collect::<Vec<_>>()
-                                .join("; ")
-                        ))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                ))
-            }
-        }
         Command::License { .. } => unreachable!(),
         Command::Watch { .. } => unreachable!(),
     }.map(|()|0)
 }
 
-struct RuleObservation {
-    plan: CleanupPlan,
-    error: Option<String>,
-}
-
-fn observe_rules(snapshot: &Snapshot) -> RuleObservation {
-    match Store::from_env().and_then(|store| store.load()) {
-        Ok(state) => RuleObservation {
-            plan: evaluate(snapshot, &state, &PolicyContext { state_valid: true }),
-            error: None,
-        },
-        Err(error) => RuleObservation {
-            plan: evaluate(snapshot, &PolicyState::default(), &PolicyContext::default()),
-            error: Some(safe_text(&error)),
-        },
-    }
-}
-
-fn disposition_text(value: Disposition) -> &'static str {
-    match value {
-        Disposition::Automatic => "Automatic",
-        Disposition::Pending => "Needs review",
-        Disposition::Protected => "Protected / read-only",
-    }
-}
-
-fn policy_summary(observation: &RuleObservation) -> String {
-    let mut text = format!(
-        "Rule revision {} · Automatic {} · Needs review {} · Protected {} · Application quitting disabled",
-        observation.plan.rule_revision,
-        observation.plan.automatic_count,
-        observation.plan.pending_count,
-        observation.plan.protected_count
-    );
-    if let Some(error) = &observation.error {
-        text.push_str(&format!(
-            "\nInvalid rules: {error}; inspection remains available, but settings and preview are disabled."
-        ));
-    }
-    text
-}
-
-fn snapshot_json(snapshot: &Snapshot, observation: &RuleObservation) -> serde_json::Value {
+fn snapshot_json(snapshot: &Snapshot) -> serde_json::Value {
     let mut value = serde_json::to_value(output::export_snapshot(snapshot, false))
         .expect("serializable snapshot");
-    value["policy"] = serde_json::to_value(&observation.plan).expect("serializable plan");
-    value["policy_state_valid"] = json!(observation.error.is_none());
-    value["policy_error"] = json!(observation.error);
     add_labels(&mut value, snapshot);
     value
 }
@@ -491,82 +356,25 @@ fn add_labels(value: &mut serde_json::Value, snapshot: &Snapshot) {
     }
 }
 
-fn classified_list_text(
-    snapshot: &Snapshot,
-    limit: Option<usize>,
-    observation: &RuleObservation,
-) -> String {
+fn list_text(snapshot: &Snapshot, limit: Option<usize>) -> String {
     let mut text = format!(
-        "{}\n{}\n\nMemory\tInstances\tCategory\tPolicy\tName\tObject ID\n",
-        output::status_text(snapshot),
-        policy_summary(observation)
+        "{}\n\nMemory\tInstances\tCategory\tName\tObject ID\n",
+        output::status_text(snapshot)
     );
     for group in snapshot
         .groups
         .iter()
         .take(limit.unwrap_or(snapshot.groups.len()))
     {
-        let state = observation
-            .plan
-            .entries
-            .iter()
-            .find(|entry| entry.group_id == group.id)
-            .map(|entry| disposition_text(entry.disposition))
-            .unwrap_or("Unknown");
         text.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\n",
             output::metric_bytes(&group.memory_bytes),
             group.process_ids.len(),
             output::category_text(group.category),
-            state,
             safe_text(&group.name),
             safe_text(&group.id)
         ));
     }
-    text.push_str("Use inspect for individual reasons. Developer labels do not establish task completion or permission to stop a task.\n");
+    text.push_str("Use inspect for individual details. Developer labels do not establish task completion or permission to stop a task.\n");
     text
-}
-
-/// One readable line from the already scrubbed probe; the error, if any, follows it.
-fn storage_text(storage: &serde_json::Value) -> String {
-    let field = |name: &str| storage[name].as_str().map(safe_text);
-    let mut text = match field("root") {
-        Some(root) => format!(
-            "Storage: {root} ({})",
-            field("root_status").unwrap_or_else(|| "unknown".into())
-        ),
-        None => "Storage: unavailable".into(),
-    };
-    if let Some(state) = field("state_status") {
-        text.push_str(&format!(" · rules {state}"));
-        if let (Some(revision), Some(count)) =
-            (storage["revision"].as_u64(), storage["rule_count"].as_u64())
-        {
-            text.push_str(&format!(", revision {revision}, {count} rules"));
-        }
-    }
-    if let Some(journal) = field("journal_status") {
-        text.push_str(&format!(" · journal {journal}"));
-    }
-    if let Some(write) = field("write_status") {
-        text.push_str(&format!(" · write {}", write.replace('_', " ")));
-    }
-    if let Some(error) = field("error") {
-        text.push_str(&format!("\nStorage error: {error}"));
-    }
-    text
-}
-
-fn scrub_paths(mut value: serde_json::Value) -> serde_json::Value {
-    fn scrub(value: &mut serde_json::Value, home: Option<&str>) {
-        match value {
-            serde_json::Value::String(text) => *text = output::redact_path(text, home),
-            serde_json::Value::Array(values) => values.iter_mut().for_each(|v| scrub(v, home)),
-            serde_json::Value::Object(values) => values.values_mut().for_each(|v| scrub(v, home)),
-            _ => {}
-        }
-    }
-    let home = std::env::var("HOME").ok();
-    scrub(&mut value, home.as_deref());
-    value
 }

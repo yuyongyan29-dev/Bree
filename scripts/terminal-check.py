@@ -84,7 +84,7 @@ with empty_bree_environment(args.output) as env:
     _, ctrl_c = session(b"\x03", expected_exit=130, env=env)
     _, tiny = session(b"q", size=(5, 20), marker=b"Resize", env=env)
 report = {
-    "data_dir": env["BREE_DATA_DIR"],
+    "home_dir": env["HOME"],
     "runs": args.runs,
     "skeleton_p95_ms": sorted(times)[max(0, int(len(times) * .95) - 1)],
     "first_home_result_p95_ms": sorted(result_times)[max(0, int(len(result_times) * .95) - 1)],
