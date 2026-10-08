@@ -20,19 +20,21 @@
 <p align="center">
   <a href="#安装">安装</a> ·
   <a href="#使用">使用</a> ·
-  <a href="docs/cli.md">完整说明</a> ·
+  <a href="docs/cli.zh-CN.md">完整说明</a> ·
   <a href="https://github.com/yuyongyan29-dev/Bree/issues">反馈问题</a>
 </p>
 
 Bree 把系统内存压力、应用与进程占用放进一个键盘操作的终端界面。查看谁占用了内存，追到每个对象的归属和指标依据，也能用直接命令与 JSON 持续观察。
 
-**Bree 是无持久状态的只读查看器。已验证原生 Apple Silicon、macOS 27.0.1，其他系统组合尚待验证。包版本为 `0.4.0-alpha.1`。**
+**Bree 是无持久状态的只读查看器。正式支持 macOS 27、Apple Silicon，已在维护者的 Mac（Mac17,3、Apple M5、macOS 27.0.1）上实测。包版本为 `0.4.0-alpha.1`。**
 
 0.4 包含不兼容变更：移除 `clean`、`history`，JSON 使用 schema 2。Bree 不读取、迁移或删除此前 0.3 及更早版本留下的数据；不再需要时，可手动删除 `~/Library/Application Support/Bree`。
 
 <!-- screenshot: TUI Home and Resources -->
 
 ## 安装
+
+其他 macOS 版本未在维护者机器上实测，不在支持范围内。CI 在 macOS 15 上能编译并通过自动测试，仅作参考。Intel 不支持，curl 安装器会拒绝。
 
 两种方式均使用预编译程序，**无需安装 Rust、Cargo、Python 或 Node.js**。安装与升级需联网，日常查看在本机完成。
 
@@ -45,7 +47,7 @@ brew install yuyongyan29-dev/tap/bree
 bree
 ```
 
-通过 Bree 的独立 tap 安装预编译 bottle，目前面向原生 Apple Silicon、macOS 27；其他版本尚未验证。
+Bree 的独立 tap 仅提供原生 Apple Silicon、macOS 27 的预编译 bottle。
 
 ### curl
 
@@ -64,7 +66,7 @@ bree
 
 将同一行 `export` 加入 `~/.zshrc`，以后新终端也能直接运行。安装器校验 SHA-256 和版本后才替换旧程序，检查失败时保留原文件，不使用 sudo，也不改写 shell 配置。
 
-升级、卸载、自定义目录与兼容范围见 [安装说明](docs/installation.md)。当前程序未完成 Developer ID 签名与公证，干净账号安装仍待验证。
+升级、卸载、自定义目录与兼容范围见 [安装说明](docs/installation.zh-CN.md)。发行程序没有 Developer ID 签名或公证，干净账号安装仍待验证。
 
 ## 能做什么
 
@@ -72,7 +74,7 @@ bree
 |---|---|
 | Mac 的内存状况如何？ | 总量、已用量、压缩、交换空间与内存压力 |
 | 哪个应用或进程占用了内存？ | 按有证据的应用归属分组，查看进程详情，按名称、bundle ID 或 PID 搜索 |
-| 进程属于哪个 AI／开发工具？ | 按[已说明的可执行文件安装布局](docs/cli.md#development-labels)标注 ChatGPT.app 内置的 Codex CLI 与原生安装的 Claude Code，不锁定版本号；标签只解释安装来源，不代表任务已完成或内存可以安全回收 |
+| 进程属于哪个 AI／开发工具？ | 按[已说明的可执行文件安装布局](docs/cli.zh-CN.md#development-labels)标注 ChatGPT.app 内置的 Codex CLI 与原生安装的 Claude Code，不锁定版本号；标签只解释安装来源，不代表任务已完成或内存可以安全回收 |
 | 占用是否还在变化？ | 前台持续观察，以及文本、JSON／JSONL 输出 |
 
 未知或无权限的数据明确标记，不填成零。
@@ -121,7 +123,15 @@ bree list --search Safari --sort name --json
 bree watch --json --count 3
 ```
 
-JSON 保持 `schema_version: 2`。指标包含 `value`、`status`、`reason`，来源在使用说明中集中记录；分组新增 `short_id`，`id` 与 `process_ids` 中的完整 ID 以及 Unix 毫秒字段 `sampled_at_unix_ms` 含义不变。`list` 的 `groups` 为查询、排序与 `--limit` 后的显示结果，`processes`、`coverage` 保留完整样本；`view` 元数据含 `search`、`sort`、`total_groups`、`matched_groups` 和 `shown_groups`。未知值为 `null`；stdout 只输出结果，诊断写入 stderr。命令选项、指标定义与 schema 变更见 [完整使用说明](docs/cli.md)。
+JSON 保持 `schema_version: 2`。指标包含 `value`、`status`、`reason`，来源在使用说明中集中记录；分组新增 `short_id`，`id` 与 `process_ids` 中的完整 ID 以及 Unix 毫秒字段 `sampled_at_unix_ms` 含义不变。`list` 的 `groups` 为查询、排序与 `--limit` 后的显示结果，`processes`、`coverage` 保留完整样本；`view` 元数据含 `search`、`sort`、`total_groups`、`matched_groups` 和 `shown_groups`。未知值为 `null`；stdout 只输出结果，诊断写入 stderr。命令选项、指标定义与 schema 变更见 [完整使用说明](docs/cli.zh-CN.md#输出契约)。
+
+## 已知限制
+
+- Bree 只读：不结束应用，不保存数据，也没有后台服务。
+- 发行程序未做 Developer ID 签名、未公证，仅有 ad-hoc 签名；干净账号安装仍未验证。
+- 正式支持仅限维护者 Mac 上实测的 macOS 27、Apple Silicon。其他 macOS 版本未在维护者机器上实测、不支持；macOS 15 CI 结果只作参考。Intel 不支持，curl 安装器会拒绝；Homebrew bottle 只提供 macOS 27。
+- `inspect <pid>` 不检测两次命令之间的 PID 复用。需要绑定采样实例时使用完整进程 ID。
+- `inspect --json` 可能包含项目名和当前 `HOME` 前缀之外的路径，分享前请检查。
 
 ## 反馈与贡献
 

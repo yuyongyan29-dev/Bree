@@ -26,13 +26,15 @@
 
 Bree brings system memory pressure, application usage, and process details into a terminal interface you can navigate with your keyboard. Find what is using memory, inspect the evidence behind each application's grouping and metrics, or follow changes with direct commands and JSON output.
 
-**Bree is a read-only viewer with no persistent state. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. The package version is `0.4.0-alpha.1`.**
+**Bree is a read-only viewer with no persistent state. Official support is macOS 27 on Apple Silicon, tested on the maintainer's Mac (Mac17,3, Apple M5, macOS 27.0.1). The package version is `0.4.0-alpha.1`.**
 
 Version 0.4 includes breaking changes: `clean` and `history` are removed, and JSON uses schema 2. Bree does not read, migrate, or delete data left by earlier 0.3 or older builds; you may manually remove `~/Library/Application Support/Bree` if no longer needed.
 
 <!-- screenshot: TUI Home and Resources -->
 
 ## Installation
+
+Other macOS versions have not been tested on a maintainer machine and are outside the supported scope. CI builds and automated tests pass on macOS 15 as reference evidence only. Intel is unsupported and rejected by the curl installer.
 
 Both methods install precompiled binaries. **You do not need Rust, Cargo, Python, or Node.js.** Installation and updates require internet access; everyday memory inspection runs locally.
 
@@ -45,7 +47,7 @@ brew install yuyongyan29-dev/tap/bree
 bree
 ```
 
-Bree's tap provides a precompiled Homebrew bottle for native Apple Silicon on macOS 27. Other macOS versions have not been verified.
+Bree's tap provides a precompiled Homebrew bottle only for native Apple Silicon on macOS 27.
 
 ### curl
 
@@ -64,7 +66,7 @@ bree
 
 Add the same `export` line to `~/.zshrc` to make the command available in new terminal sessions. The installer checks SHA-256 and the binary's version before replacing an existing installation. Failed checks leave the old binary in place. It does not use sudo or modify your shell configuration.
 
-See the [installation guide](docs/installation.md) for updates, uninstalling, custom directories, and compatibility details. This guide is currently in Chinese. Developer ID signing, notarization, and installation under a clean user account remain unverified.
+See the [installation guide](docs/installation.md) for updates, uninstalling, custom directories, and compatibility details. Releases have no Developer ID signature or notarization; installation under a clean user account remains unverified.
 
 ## Features
 
@@ -121,7 +123,15 @@ bree list --search Safari --sort name --json
 bree watch --json --count 3
 ```
 
-JSON keeps `schema_version: 2`. Metrics contain `value`, `status`, and `reason`; sources are documented centrally in the user guide. Group objects add `short_id`, while full IDs in `id` and `process_ids` and the Unix-millisecond `sampled_at_unix_ms` field retain their meanings. For `list`, `groups` reflects search, sorting, and `--limit`, while `processes` and `coverage` retain the full sample. The `view` metadata reports `search`, `sort`, `total_groups`, `matched_groups`, and `shown_groups`. Unknown values are `null`. Results go to stdout; diagnostics go to stderr. Command options, metric definitions, and the schema changes are covered in the [user guide](docs/cli.md), currently in Chinese.
+JSON keeps `schema_version: 2`. Metrics contain `value`, `status`, and `reason`; sources are documented centrally in the user guide. Group objects add `short_id`, while full IDs in `id` and `process_ids` and the Unix-millisecond `sampled_at_unix_ms` field retain their meanings. For `list`, `groups` reflects search, sorting, and `--limit`, while `processes` and `coverage` retain the full sample. The `view` metadata reports `search`, `sort`, `total_groups`, `matched_groups`, and `shown_groups`. Unknown values are `null`. Results go to stdout; diagnostics go to stderr. Command options, metric definitions, and the schema changes are covered in the [user guide](docs/cli.md#output-contract).
+
+## Known limitations
+
+- Bree is read-only: it does not quit applications or save data, and has no background service.
+- Releases are unsigned by Developer ID and unnotarized; the binary has only an ad-hoc signature. Installation under a clean user account remains unverified.
+- Official support is limited to macOS 27 on Apple Silicon, tested on the maintainer's Mac. Other macOS versions are untested on a maintainer machine and unsupported; macOS 15 CI results are reference evidence only. Intel is unsupported and rejected by the curl installer; Homebrew bottles are provided only for macOS 27.
+- `inspect <pid>` does not detect PID reuse between commands. Use a full process ID to bind inspection to the sampled instance.
+- `inspect --json` can contain project names and paths outside the current `HOME` prefix. Review output before sharing it.
 
 ## Feedback and contributions
 

@@ -117,13 +117,7 @@ sh distribution/notarize.sh \
 - Bree 是无持久状态的只读查看器，不结束应用、不做后台清理，也不删除旧版留下的数据。
 - JSON stdout 只输出结果，诊断写 stderr；保持已声明的 schema 与有效性字段。
 
-指标与能力范围见 [使用说明](docs/cli.md)。
-
-## 提交 Pull Request
-
-使用独立分支，保持改动范围清楚。描述具体问题、修改后的行为、复现或验证步骤，以及尚未验证的范围。修复问题时引用对应 Issue；功能改动同步更新有关文档。
-
-请不要把与 CLI 无关的产品设计、研究素材或未使用的构建产物加入仓库。
+指标与输出契约见[使用说明](docs/cli.zh-CN.md#输出契约)，支持范围见[安装说明](docs/installation.zh-CN.md#兼容范围)。英文说明与 `*.zh-CN.md` 译文应保持一致；JSON 字段变更还需同步更新 `tests/cli_contract.rs`。
 
 ## 代码许可
 

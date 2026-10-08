@@ -117,7 +117,7 @@ Packaging, notarization submission, publishing a GitHub Release, updating the ta
 - Bree is a read-only viewer with no persistent state. It does not stop applications, run background cleanup, or delete data left by older versions.
 - JSON stdout contains only results; diagnostics go to stderr. Preserve the declared schemas and validity fields.
 
-See the [user guide](docs/cli.md) for metric definitions and capability scope.
+See the [user guide](docs/cli.md#output-contract) for metric definitions and the output contract, and the [installation guide](docs/installation.md#supported-platforms) for the supported scope. Keep the English guides and their `*.zh-CN.md` translations in sync; JSON field changes must also update `tests/cli_contract.rs`.
 
 ## Contribution license
 

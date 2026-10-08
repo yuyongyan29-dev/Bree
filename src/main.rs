@@ -33,11 +33,13 @@ struct Cli {
 enum Command {
     /// Show a single system memory snapshot
     Status {
+        /// Output one JSON object
         #[arg(long)]
         json: bool,
     },
-    /// List memory usage by verified application ownership; retain unknown owners
+    /// List application and unattributed process groups by memory usage
     List {
+        /// Output JSON; processes and coverage retain the full sample
         #[arg(long)]
         json: bool,
         /// Limit displayed groups; JSON retains the full process table and coverage
@@ -52,28 +54,36 @@ enum Command {
     },
     /// Inspect a PID, group short ID or full ID using a fresh sample
     Inspect {
+        /// PID, current group short ID or full ID; PID reuse between commands is not detected
         id: String,
+        /// Output JSON with home-redacted paths; project names may remain
         #[arg(long)]
         json: bool,
     },
-    /// Watch in the foreground; output text or JSONL when piped
+    /// Monitor in the foreground; use the TUI or output text or JSONL
     Watch {
+        /// Seconds between refreshes (1-60)
         #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u64).range(1..=60))]
         interval: u64,
+        /// Output JSONL: one complete snapshot per line
         #[arg(long)]
         json: bool,
+        /// Stop after this many samples (at least 1); use text or JSONL instead of the TUI
         #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
         count: Option<u64>,
     },
     /// Check sampling coverage and capabilities without requesting permissions
     Doctor {
+        /// Output one JSON report
         #[arg(long)]
         json: bool,
     },
     /// Show the GPL-3.0 license or bundled third-party notices offline
     License {
+        /// Show bundled third-party notices instead of the project license
         #[arg(long)]
         third_party: bool,
+        /// Output license text and metadata as one JSON object
         #[arg(long)]
         json: bool,
     },

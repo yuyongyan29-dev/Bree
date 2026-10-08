@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Bree is currently in the `0.3.0-alpha` release line. Security fixes are provided on a best-effort basis only for the latest release in that line. Older alpha releases are not maintained; update to the latest alpha before checking whether a problem still occurs. See [Releases](https://github.com/yuyongyan29-dev/Bree/releases) and the [installation guide](docs/installation.md).
+Bree is currently in the `0.4.0-alpha` release line. Security fixes are provided on a best-effort basis only for the latest release in that line. Older alpha releases are not maintained; update to the latest alpha before checking whether a problem still occurs. See [Releases](https://github.com/yuyongyan29-dev/Bree/releases) and the [installation guide](docs/installation.md).
 
 ## Reporting a vulnerability
 
@@ -27,6 +27,6 @@ Maintainers review reports and coordinate fixes and disclosure on a best-effort 
 
 ## 中文说明
 
-当前只对 `0.3.0-alpha` 线的最新发行版尽力提供安全修复，旧版不再维护。请通过仓库 Security → Advisories → **Report a vulnerability** [私下报告](https://github.com/yuyongyan29-dev/Bree/security/advisories/new)，不要公开开 Issue 或发布漏洞细节。报告前移除密钥、环境变量、个人路径等隐私信息；不承诺具体响应或修复时限。
+当前只对 `0.4.0-alpha` 线的最新发行版尽力提供安全修复，旧版不再维护；安装与支持范围见[中文安装说明](docs/installation.zh-CN.md)。请通过仓库 Security → Advisories → **Report a vulnerability** [私下报告](https://github.com/yuyongyan29-dev/Bree/security/advisories/new)，不要公开开 Issue 或发布漏洞细节。报告前移除密钥、环境变量、个人路径等隐私信息；不承诺具体响应或修复时限。
 
 Bree 在本机采集内存信息，不联网采集；安装和升级需联网。默认 `list`／`watch` 导出省略路径，`inspect` 仍可能显示脱敏路径与项目名。Bree 是无持久状态的只读查看器，不结束应用，不读取、创建、迁移或删除旧数据目录；旧数据可由用户手动删除。

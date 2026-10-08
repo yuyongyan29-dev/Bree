@@ -6,7 +6,7 @@
 
 - Bree 是轻量的 macOS 本机内存只读查看器，无持久状态，使用 Rust 实现 CLI 与键盘 TUI，只采集、展示和导出内存信息。AI／开发工具标签用于解释归属，不代表任务已完成或可以安全回收。
 - 当前仓库是独立 CLI。不要因其他产品形态引入 Web 前端、本地 HTTP 服务、默认常驻进程或运行时语言环境。普通命令完成后退出，持续观察由资源页与显式 `watch` 承担。
-- 实际行为先查看实现和测试，再核对 [使用说明](docs/cli.md)。安装与兼容范围查看 [安装说明](docs/installation.md)，开发流程查看 [贡献指南](CONTRIBUTING.md)。历史设计不能证明功能已经实现或平台已经验证。
+- 实际行为先查看实现和测试，再核对 [使用说明](docs/cli.zh-CN.md)。安装与兼容范围查看 [安装说明](docs/installation.zh-CN.md)，开发流程查看 [贡献指南](CONTRIBUTING.zh-CN.md)。历史设计不能证明功能已经实现或平台已经验证。
 - 工具链以 [rust-toolchain.toml](rust-toolchain.toml) 为准；包版本、依赖与锁定结果分别以 [Cargo.toml](Cargo.toml)、[Cargo.lock](Cargo.lock) 为准。不要把本机或 CI 测试通过扩大为所有 macOS 版本受支持。
 - CLI 帮助、错误和 TUI 当前使用英文。用户行为或安装方式变化时同步更新 [英文 README](README.md)、[中文 README](README.zh-CN.md) 与相关 `docs/`，避免两种语言承诺不同能力。
 
@@ -31,10 +31,10 @@ CLI 与 TUI 共用采集、查询和输出逻辑；修复共同问题时改共�
 
 - 未知、无权限、不支持、失效与真实零值分开处理，保留 `Metric` 的 `value/status/reason`。内部使用字节，文本使用 MiB／GiB；进程统一使用 RSS，不把分组总量当作系统已用或可回收内存。
 - 每个进程只属于一个分组；归属冲突与未知对象明确保留。不依据名称或高内存占用推断某个 AI 任务已完成。CPU 首次采样只建基线，后续使用实际时间差。
-- 只有 AppKit 激活策略为 Regular 的普通应用能作为分组主应用；嵌套在其 bundle 内的 helper 应用并入该应用，菜单栏、后台应用及归属冲突进程保持未归属，但按同一可执行路径与同一 UID 聚合展示；路径不可读时按同名与同一 UID 聚合，UID 不可读时保留独立实例。无应用归属的分组优先使用可靠开发工具标签，原生 Claude Code 名称附带安装路径中的版本。开发工具标签按安装布局匹配，不锁定单个版本号；具体规则见 [使用说明](docs/cli.md)。
+- 只有 AppKit 激活策略为 Regular 的普通应用能作为分组主应用；嵌套在其 bundle 内的 helper 应用并入该应用，菜单栏、后台应用及归属冲突进程保持未归属，但按同一可执行路径与同一 UID 聚合展示；路径不可读时按同名与同一 UID 聚合，UID 不可读时保留独立实例。无应用归属的分组优先使用可靠开发工具标签，原生 Claude Code 名称附带安装路径中的版本。开发工具标签按安装布局匹配，不锁定单个版本号；具体规则见 [使用说明](docs/cli.zh-CN.md)。
 - 搜索和排序使用共享 `src/query.rs`。搜索仅改变显示结果，不改变分类；`list` 的 `groups` 可筛选和截断，`processes`、`coverage` 保留完整样本。
 - 保持 JSON schema 2、有效性字段和退出码契约；不静默改变现有字段含义。stdout 只输出结果，诊断写 stderr，`watch --json` 保持 JSONL。变更对应检查在 `tests/cli_contract.rs`。
-- 文本采样时间使用 `libc::localtime_r` 转换为本地 `HH:MM:SS`，JSON 保留 `sampled_at_unix_ms`。指标来源集中记录在 `docs/cli.md`；内存公式仅在 doctor 文本和 JSON notes 中解释，JSON `system.used_definition` 保留。
+- 文本采样时间使用 `libc::localtime_r` 转换为本地 `HH:MM:SS`，JSON 保留 `sampled_at_unix_ms`。指标来源集中记录在 `docs/cli.zh-CN.md`；内存公式仅在 doctor 文本和 JSON notes 中解释，JSON `system.used_definition` 保留。
 - 文本进程使用 PID，分组使用稳定派生的短 ID，完整样本内碰撞时加长；显示筛选不重算短 ID。JSON 分组含 `short_id`，完整 `id` 继续用于 JSON 和 TUI 精确选中。`inspect` 接受 PID、短 ID 与完整 ID；PID 输入不检测跨命令的复用，完整进程 ID 失效不得重绑定，歧义或缺失返回结构化错误。未归属分组 ID 在分组键不变时保持稳定，inspect 展示当前成员。
 - 复用 `safe_text` 和路径脱敏逻辑处理外部名称与输出；默认导出不暴露路径，不采集或记录完整命令行、环境变量、提示词与聊天内容。
 

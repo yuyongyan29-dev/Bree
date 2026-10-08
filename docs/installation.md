@@ -1,25 +1,29 @@
-# 安装 Bree
+# Installing Bree
 
-Bree 免费提供，提供 Homebrew 和 curl 两个安装入口。两者使用同一份预编译程序；无需账号，也无需安装 Rust、Cargo、Python 或 Node.js。
+[English](installation.md) · [中文](installation.zh-CN.md)
 
-## 兼容范围
+Bree is free and can be installed with Homebrew or curl. Both use the same precompiled program. No account, Rust, Cargo, Python, or Node.js is required.
 
-| 项目 | 当前范围 |
+## Supported platforms
+
+| Item | Current scope |
 |---|---|
-| 程序版本 | `0.4.0-alpha.1` |
-| 架构 | 原生 Apple Silicon（arm64） |
-| 已验证系统 | macOS 27.0.1 |
-| Homebrew bottle | Apple Silicon、macOS 27 |
-| 其他 macOS 版本 | 尚待验证，不列为已支持组合 |
-| Intel、Linux、Windows | 暂不提供安装包 |
+| Program version | `0.4.0-alpha.1` |
+| Official support | macOS 27 on native Apple Silicon (arm64), tested on the maintainer's Mac |
+| Tested machine | Mac17,3, Apple M5, macOS 27.0.1 |
+| Homebrew bottle | Apple Silicon, macOS 27 only |
+| Other macOS versions | Not tested on a maintainer machine and outside the supported scope |
+| CI reference | Builds and automated tests pass on macOS 15; this is reference evidence, not a supported platform |
+| Intel | Unsupported; the curl installer rejects it |
+| Linux, Windows | No installation packages |
 
-在 Apple Silicon Mac 上请使用原生终端。curl 安装器会拒绝 Rosetta 的 x86_64 环境。安装与升级需要访问 GitHub，Bree 日常查看本机资源无需联网。
+Use a native terminal on Apple Silicon. The curl installer also rejects an x86_64 environment under Rosetta. It checks macOS and architecture but does not check the macOS version; passing that check does not extend the supported scope. Installation and upgrades need access to GitHub; everyday local memory inspection needs no network.
 
-Bree 不会结束应用。发行程序仅有 ad-hoc 签名，尚未完成 Developer ID 签名、公证或干净账号安装验证；安装器不会自动移除 quarantine 或绕过系统校验。
+Bree does not quit applications. Releases have only an ad-hoc signature, with no Developer ID signature or notarization. Installation under a clean user account remains unverified. The installer does not remove quarantine or bypass system checks.
 
-## Homebrew 安装
+## Install with Homebrew
 
-先安装并按提示配置 [Homebrew](https://brew.sh/)，然后执行：
+Install and configure [Homebrew](https://brew.sh/) first, then run:
 
 ```sh
 brew install yuyongyan29-dev/tap/bree
@@ -27,36 +31,36 @@ bree --version
 bree
 ```
 
-完整的 tap 名称会自动选择 [Bree 的安装定义](https://github.com/yuyongyan29-dev/homebrew-tap)，无需另外手动添加 tap。Formula 固定版本 URL 和 SHA-256，默认下载匹配系统的预编译 bottle 并安装 `bree` 命令。
+The full tap name automatically selects [Bree's Formula](https://github.com/yuyongyan29-dev/homebrew-tap); there is no need to add the tap separately. The Formula pins the version URL and SHA-256 and downloads a matching precompiled bottle by default to install the `bree` command.
 
-匹配 bottle 的标准安装无需 Xcode 命令行工具，也无需 Rust。当前 tap 仅提供 macOS 27 arm64 bottle，并限制最低系统为 macOS 27；其他版本尚未完成发行验证。Homebrew 自身的系统要求见 [官方安装说明](https://docs.brew.sh/Installation)。
+A standard installation using the matching bottle needs neither Xcode Command Line Tools nor Rust. The tap provides only a macOS 27 arm64 bottle and requires at least macOS 27. Other macOS versions are outside Bree's supported scope. Homebrew's own requirements are in its [installation documentation](https://docs.brew.sh/Installation).
 
-此前短暂提供的 cask 已撤下：未公证程序带 quarantine 安装后会被 Gatekeeper 阻挡。若你装过旧 cask，先执行 `brew uninstall --cask bree`，再使用上面的 Formula 安装命令。安装脚本不修改系统安全设置。
+The briefly available cask was withdrawn because Gatekeeper blocked the unnotarized program when installed with quarantine. If you installed that old cask, run `brew uninstall --cask bree` before using the Formula command above. The installer does not change system security settings.
 
-升级：
+Upgrade:
 
 ```sh
 brew update
 brew upgrade yuyongyan29-dev/tap/bree
 ```
 
-卸载：
+Uninstall:
 
 ```sh
 brew uninstall bree
 ```
 
-## curl 安装
+## Install with curl
 
-使用 macOS 自带的 shell、curl 与 SHA-256 工具：
+Use the shell, curl, and SHA-256 tools included with macOS:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/yuyongyan29-dev/Bree/main/distribution/install.sh | sh
 ```
 
-默认安装到 `~/.local/bin/bree`，不需要 sudo。默认从仓库的 `distribution/latest-version.txt` 读取发行版本，再从固定的 `vVERSION` 标签下载程序与校验文件，因此 Alpha 版本也可通过同一条命令安装。SHA-256 和 `bree --version` 检查通过后，才原子替换旧程序；下载、校验或版本检查失败会保留原文件。
+The default location is `~/.local/bin/bree`; sudo is not needed. The installer reads the default release version from the repository's `distribution/latest-version.txt`, then downloads the binary and checksum from the fixed `vVERSION` tag. This also lets the same command install Alpha releases. It replaces an existing binary atomically only after SHA-256 and `bree --version` checks succeed. Download, checksum, or version-check failures preserve the old file.
 
-安装器不修改 shell 配置。如果 `~/.local/bin` 尚未加入 PATH，在当前终端执行：
+The installer does not edit shell configuration. If `~/.local/bin` is not in PATH, run this in the current terminal:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
@@ -64,41 +68,41 @@ bree --version
 bree
 ```
 
-把同一行 `export` 保存到 `~/.zshrc`，以后新终端也能使用。其他 shell 请使用自己的配置文件。
+Save the same `export` line in `~/.zshrc` to use Bree in new terminals. Use the appropriate configuration file for other shells.
 
-### 安装到自定义目录
+### Use a custom directory
 
-选择由自己管理的可写目录：
+Choose a writable directory you manage:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/yuyongyan29-dev/Bree/main/distribution/install.sh \
   | sh -s -- --bin-dir "$HOME/bin"
 ```
 
-如果该目录不在 PATH 中，安装器会打印应添加的配置行。它不会覆盖符号链接；已有 Homebrew 管理的安装请用 Homebrew 升级，或选择另一个目录。
+If the directory is not in PATH, the installer prints the configuration line to add. It does not overwrite symbolic links. Upgrade a Homebrew-managed installation through Homebrew, or choose another directory.
 
-### 固定版本与升级
+### Pin a version and upgrade
 
-固定到当前版本：
+Pin the current version:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/yuyongyan29-dev/Bree/main/distribution/install.sh \
   | sh -s -- --version 0.4.0-alpha.1
 ```
 
-再次执行默认安装命令即可升级到安装器选择的版本，也可以显式使用 `--version latest`。下载地址可通过 `BREE_RELEASE_BASE_URL` 指向自己的 HTTPS Release 镜像，路径应遵循本仓库的发行资产布局；可用 `BREE_VERSION_URL` 指定 HTTPS 版本元数据地址。
+Run the default installation command again to upgrade to the installer's selected release, or explicitly use `--version latest`. Set `BREE_RELEASE_BASE_URL` to use your own HTTPS release mirror with the same asset layout. `BREE_VERSION_URL` selects an HTTPS version metadata URL.
 
-### 卸载
+### Uninstall
 
-删除 curl 安装的文件即可；自定义目录请替换路径：
+Remove the curl-installed file, adjusting the path for a custom directory:
 
 ```sh
 rm "$HOME/.local/bin/bree"
 ```
 
-Bree 的只读查看器不保存数据。0.3 及更早版本留下的 `~/Library/Application Support/Bree` 可以手动删除；程序和卸载流程不会自动删除或迁移旧目录。
+Bree's read-only viewer saves no data. You may manually remove `~/Library/Application Support/Bree` left by version 0.3 or earlier. Neither the program nor uninstalling automatically deletes or migrates that directory.
 
-## 检查安装
+## Check the installation
 
 ```sh
 command -v bree
@@ -107,6 +111,6 @@ bree doctor
 bree status --json
 ```
 
-`command -v` 可确认当前使用的程序路径。若曾同时使用两种渠道，PATH 中靠前的目录决定运行哪个版本；后续升级请使用该安装渠道。
+`command -v` identifies the binary currently used. If you installed through both channels, the earlier directory in PATH determines the running version. Use that installation channel for later upgrades.
 
-缺少进程指标不等于安装失败，`doctor` 和结果中的有效性字段会说明可用范围。其他问题请在 [Issues](https://github.com/yuyongyan29-dev/Bree/issues) 提供系统版本、架构、安装方式和错误输出。分享数据前检查其中的应用名与本地路径。
+Missing process metrics do not mean installation failed. `doctor` and the validity fields describe data availability. For other problems, include the macOS version, architecture, installation method, and error output in an [issue](https://github.com/yuyongyan29-dev/Bree/issues). Review application names and local paths before sharing data.
