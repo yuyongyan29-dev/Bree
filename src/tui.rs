@@ -30,7 +30,7 @@ use crate::cleanup::{self, CleanupMode, CleanupResult, Session};
 use crate::collect::{Collector, pump_platform_events};
 use crate::history::{self, HistoryItem};
 use crate::model::{Category, OccupancyGroup, ProcessIdentity, ProcessInfo, Snapshot, safe_text};
-use crate::output::{metric_bytes, pressure_text};
+use crate::output::{metric_bytes, missing_text, pressure_text};
 use crate::policy::{
     AppScope, CleanupPlan, Disposition, PlanEntry, PolicyContext, PolicyState, RuleAction,
     RuleChange, evaluate, scope_for_group,
@@ -222,9 +222,9 @@ impl Filter {
         match self {
             Self::All => true,
             Self::Application => category == Category::Application,
-            Self::Ai => category == Category::AiDevelopment,
             Self::System => category == Category::System,
-            Self::Pending => false,
+            // Development labels and policy state decide these in group_in_filter.
+            Self::Ai | Self::Pending => false,
         }
     }
 }
@@ -1310,7 +1310,6 @@ fn run_loop(
 fn category_name(category: Category) -> &'static str {
     match category {
         Category::Application => "Apps",
-        Category::AiDevelopment => "AI / Dev",
         Category::System => "System",
         Category::Unknown => "Unknown",
     }
@@ -2154,10 +2153,11 @@ fn render_home_content(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
 
 fn display_memory(metric: &crate::model::Metric<u64>, compact: bool) -> String {
     if compact && (metric.status != crate::model::Validity::Ok || metric.value.is_none()) {
-        if metric.status == crate::model::Validity::Denied {
-            "Denied".into()
-        } else {
-            "Unknown".into()
+        // Short forms fit the 9-column compact memory cell.
+        match metric.status {
+            crate::model::Validity::Denied => "Denied".into(),
+            crate::model::Validity::Unsupported => "N/A".into(),
+            status => missing_text(status).into(),
         }
     } else {
         metric_bytes(metric)
@@ -4042,6 +4042,30 @@ mod tests {
         assert!(app.confirmation.is_none());
         assert!(app.cleanup.is_none());
         assert!(!store.0.root().exists());
+    }
+
+    #[test]
+    fn compact_memory_cells_keep_missing_causes_distinct() {
+        let cell =
+            |status| display_memory(&Metric::<u64>::unavailable(status, "test", "missing"), true);
+        let cells = [
+            (Validity::Denied, "Denied"),
+            (Validity::Unsupported, "N/A"),
+            (Validity::Exited, "Exited"),
+            (Validity::Stale, "Stale"),
+            (Validity::Unknown, "Unknown"),
+        ];
+        for (status, expected) in cells {
+            assert_eq!(cell(status), expected);
+            assert!(expected.chars().count() <= 9);
+        }
+        assert_eq!(
+            display_memory(
+                &Metric::unavailable(Validity::Exited, "test", "gone"),
+                false
+            ),
+            "— / Exited"
+        );
     }
 
     #[test]

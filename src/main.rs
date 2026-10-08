@@ -410,10 +410,10 @@ fn execute(
                 output::write_json(&report)
             } else {
                 output::write_text(&format!(
-                    "{}\n{}\n\nCapabilities: rules, dry-run, session results, history and limited developer-tool labels. Application quitting, AI task reclamation and background services are disabled.\nStorage: {}\n{}",
+                    "{}\n{}\n\nCapabilities: rules, dry-run, session results, history and limited developer-tool labels. Application quitting, AI task reclamation and background services are disabled.\n{}\n{}",
                     output::status_text(&snapshot),
                     policy_summary(&observation),
-                    report["rule_storage"],
+                    storage_text(&report["rule_storage"]),
                     snapshot
                         .coverage
                         .notes
@@ -575,6 +575,36 @@ fn classified_list_text(
         ));
     }
     text.push_str("Use inspect for individual reasons. Developer labels do not establish task completion or permission to stop a task.\n");
+    text
+}
+
+/// One readable line from the already scrubbed probe; the error, if any, follows it.
+fn storage_text(storage: &serde_json::Value) -> String {
+    let field = |name: &str| storage[name].as_str().map(safe_text);
+    let mut text = match field("root") {
+        Some(root) => format!(
+            "Storage: {root} ({})",
+            field("root_status").unwrap_or_else(|| "unknown".into())
+        ),
+        None => "Storage: unavailable".into(),
+    };
+    if let Some(state) = field("state_status") {
+        text.push_str(&format!(" · rules {state}"));
+        if let (Some(revision), Some(count)) =
+            (storage["revision"].as_u64(), storage["rule_count"].as_u64())
+        {
+            text.push_str(&format!(", revision {revision}, {count} rules"));
+        }
+    }
+    if let Some(journal) = field("journal_status") {
+        text.push_str(&format!(" · journal {journal}"));
+    }
+    if let Some(write) = field("write_status") {
+        text.push_str(&format!(" · write {}", write.replace('_', " ")));
+    }
+    if let Some(error) = field("error") {
+        text.push_str(&format!("\nStorage error: {error}"));
+    }
     text
 }
 

@@ -842,7 +842,7 @@ mod tests {
             evaluate(&snapshot, &PolicyState::default(), &valid_context()).protected_count,
             1
         );
-        for category in [Category::AiDevelopment, Category::Unknown, Category::System] {
+        for category in [Category::Unknown, Category::System] {
             let mut snapshot = application_snapshot();
             snapshot.groups[0].category = category;
             assert!(scope_for_group(&snapshot, &snapshot.groups[0].id).is_err());
