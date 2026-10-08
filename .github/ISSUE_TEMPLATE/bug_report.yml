@@ -1,24 +1,24 @@
 name: Bug report
-description: 报告安装、采集或交互问题
+description: Report an installation, memory collection, or interface problem
 body:
   - type: input
     id: version
     attributes:
-      label: Bree 版本
+      label: Bree version
       description: bree --version
     validations:
       required: true
   - type: input
     id: environment
     attributes:
-      label: 系统与安装方式
-      placeholder: macOS 版本、Apple Silicon 型号、Homebrew 或 curl
+      label: System and installation method
+      placeholder: macOS version, Apple Silicon model, Homebrew or curl
     validations:
       required: true
   - type: textarea
     id: reproduction
     attributes:
-      label: 复现步骤与实际结果
-      description: 请提供预期结果、必要错误输出；不要包含密钥、环境变量或个人路径。
+      label: Steps to reproduce and actual results
+      description: Include expected results and relevant error output. Do not include secrets, environment variables, or personal paths. Report security vulnerabilities privately using the Security report link in the issue chooser.
     validations:
       required: true

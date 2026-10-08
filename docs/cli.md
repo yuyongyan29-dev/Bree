@@ -4,7 +4,7 @@ Bree 在终端查看本机系统内存与应用／进程占用，提供规则、
 
 **应用正常退出功能尚未启用，当前程序不会向应用发送退出请求。** 允许规则也不会产生可执行的清理候选，`clean` 只会生成零目标或跳过结果。当前版本不提供强制结束、后台自动清理或开机启动。
 
-安装方法见 [安装说明](installation.md)，源码构建与贡献见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
+安装方法见 [安装说明](installation.md)，源码构建与贡献见 [中文贡献指南](../CONTRIBUTING.zh-CN.md)。
 
 ## 终端界面
 
@@ -71,7 +71,20 @@ bree history --json --limit 20
 
 CPU 首次采样只建立基线，后续采样使用实际时间差计算单核百分比。采样覆盖数和每个指标的有效性字段说明哪些数据可读。
 
-应用分组基于主应用和 bundle 内安装位置等证据。只有普通应用（AppKit 激活策略为 Regular，通常显示在程序坞中）作为主应用；嵌套在主应用 bundle 内的 helper 应用并入该主应用，独立的菜单栏或后台应用不单独成组，显示为未归属进程，也不能设置规则。归属冲突与未知进程独立保留，每个进程只加入一组。AI／开发工具标签只覆盖已验证的安装布局，不表示任务完成、共享关系或可安全回收；未知的 node、python 等进程不会被猜测为某个 AI 任务。
+应用分组基于主应用和 bundle 内安装位置等证据。只有普通应用（AppKit 激活策略为 Regular，通常显示在程序坞中）作为主应用；嵌套在主应用 bundle 内的 helper 应用并入该主应用，独立的菜单栏或后台应用不单独成组，显示为未归属进程，也不能设置规则。归属冲突与未知进程独立保留，每个进程只加入一组。
+
+<a id="development-labels"></a>
+
+### AI／开发工具标签
+
+标签要求进程属于当前用户且实例身份有效，并且可执行文件路径符合以下布局：
+
+| 标签 | 匹配的可执行文件路径 |
+|---|---|
+| Codex CLI | `/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex` |
+| Claude Code | `/Users/<user>/.local/share/claude/versions/<major.minor.patch>`，版本的三段均为 1–9 位 ASCII 数字 |
+
+匹配安装布局，不读取运行时版本或锁定已观察过的版本号；Claude Code 的版本后缀、额外路径层级及其他安装位置不会匹配。标签只解释安装来源，不验证签名、任务所属项目、完成状态、共享关系或可安全回收性；未知的 node、python 等进程不会被猜测为某个 AI 任务。
 
 ## 允许与保护规则
 

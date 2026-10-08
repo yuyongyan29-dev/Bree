@@ -28,6 +28,8 @@ Bree brings system memory pressure, application usage, and process details into 
 
 **Current version: `0.3.0-alpha.6`. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. Application quitting is disabled: this version does not stop applications. Rules and cleanup commands provide previews and session summaries.**
 
+<!-- screenshot: TUI Home and Resources -->
+
 ## Installation
 
 Both methods install precompiled binaries. **You do not need Rust, Cargo, Python, or Node.js.** Installation and updates require internet access; everyday memory inspection runs locally.
@@ -68,12 +70,13 @@ See the [installation guide](docs/installation.md) for updates, uninstalling, cu
 |---|---|
 | How is my Mac's memory doing? | Total and used memory, compression, swap, and memory pressure |
 | Which application or process is using memory? | Application groups supported by evidence, process details, and search by name, bundle ID, or PID |
+| Which AI or developer tool does a process belong to? | Labels for ChatGPT.app's bundled Codex CLI and native Claude Code, matched by [documented executable layouts](docs/cli.md#development-labels) without a pinned version; labels explain installation source, not task completion or whether memory can be safely reclaimed |
 | Is usage still changing? | Foreground monitoring and text, JSON, or JSONL output |
 | Why is an item protected or skipped? | Allow and protect rules, classification reasons, read-only previews, and session history |
 
 Missing or inaccessible data is explicitly marked instead of being reported as zero.
 
-Home places a compact static pixel mascot directly before the Bree wordmark, with the memory overview and menu aligned on the left below it. Smaller windows use a compact header; terminals without supported colors show the wordmark without the mascot. The mascot keeps its pixel colors, while ordinary background and text follow your terminal's light or dark theme. The artwork adds no animation, background worker, extra font, or runtime dependency. Direct commands and JSON output stay free of artwork.
+Home's static pixel mascot adds no animation, background process, or extra dependency, and stays out of direct commands and JSON output.
 
 Bree does not install a background service or launch at login. Force quitting and automatic background cleanup are unavailable.
 
@@ -113,6 +116,8 @@ JSON includes `schema_version: 1` and data validity fields. For `list`, `groups`
 Found a problem or have a suggestion? [Open an issue](https://github.com/yuyongyan29-dev/Bree/issues) with your Bree version, macOS version, architecture, and steps to reproduce. Check application names and local paths before sharing diagnostics.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development and verification guidance.
+
+Report security vulnerabilities privately using [SECURITY.md](SECURITY.md), not a public issue.
 
 <details>
 <summary>Build from source</summary>

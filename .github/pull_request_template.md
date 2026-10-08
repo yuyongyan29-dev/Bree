@@ -1,3 +1,3 @@
-说明具体问题、修改后的行为，以及实际运行的验证。
+Describe the concrete problem, the resulting behavior, and the verification you actually ran.
 
-涉及能力、指标或安装流程时，列出尚未验证的范围。请勿提交个人数据、内部开发报告、原始实验输出或设计素材。
+For changes to capabilities, metrics, or installation, list what remains unverified. Do not include secrets, environment variables, personal paths or data, internal development reports, raw experiment output, or design assets.

@@ -1,14 +1,14 @@
 name: Feature request
-description: 描述你想用 Bree 解决的具体问题
+description: Describe a concrete problem you want Bree to help with
 body:
   - type: textarea
     id: problem
     attributes:
-      label: 当前遇到的问题
-      description: 在什么场景发生，目前怎样处理？
+      label: Current problem
+      description: When does this happen, and how do you handle it today? Do not include secrets, environment variables, or personal paths.
     validations:
       required: true
   - type: textarea
     id: behavior
     attributes:
-      label: 希望的行为
+      label: Desired behavior
