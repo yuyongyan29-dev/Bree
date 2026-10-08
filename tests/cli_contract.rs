@@ -321,17 +321,172 @@ fn watch_outputs_jsonl_and_builds_a_cpu_baseline() {
 #[cfg(target_os = "macos")]
 #[test]
 fn stale_inspect_fails_as_structured_error() {
-    let output = bree(&["inspect", "p:invalid:1:1:0", "--json"]);
-    assert_eq!(output.status.code(), Some(1));
-    let error: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(error["schema_version"], 2);
-    assert!(
-        error["error"]["message"]
-            .as_str()
-            .unwrap()
-            .to_ascii_lowercase()
-            .contains("identity")
+    // Capture the ID of our own sampling child, which has exited before inspect.
+    let home = TestHome::new();
+    let child = home
+        .command()
+        .args(["list", "--json"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let sample = child.wait_with_output().unwrap();
+    assert!(sample.status.success());
+    let sample: Value = serde_json::from_slice(&sample.stdout).unwrap();
+    let expired = sample["processes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["identity"]["pid"] == pid)
+        .unwrap()["id"]
+        .as_str()
+        .unwrap();
+    for id in [expired, "p:invalid:1:1:0"] {
+        let output = home.run(&["inspect", id, "--json"]);
+        assert_eq!(output.status.code(), Some(1));
+        let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(error["schema_version"], 2);
+        assert_eq!(error["error"]["code"], "runtime_error");
+        assert!(
+            error["error"]["message"]
+                .as_str()
+                .unwrap()
+                .to_ascii_lowercase()
+                .contains("identity")
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn inspect_accepts_pid_and_group_short_id_with_current_members() {
+    let pid = std::process::id().to_string();
+    let output = bree(&["inspect", &pid, "--json"]);
+    assert!(output.status.success());
+    let detail: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(detail["group"].is_null());
+    assert_eq!(detail["processes"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        detail["processes"][0]["identity"]["pid"],
+        std::process::id()
     );
+
+    let sample = bree(&["list", "--json", "--search", &pid, "--limit", "1"]);
+    assert!(sample.status.success());
+    let sample: Value = serde_json::from_slice(&sample.stdout).unwrap();
+    let group = &sample["groups"][0];
+    let short = group["short_id"].as_str().unwrap();
+    assert!(short.len() >= 8 && short.bytes().all(|c| c.is_ascii_hexdigit()));
+    let output = bree(&["inspect", short, "--json"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let detail: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(detail["schema_version"], 2);
+    assert!(detail["sampled_at_unix_ms"].is_u64());
+    assert_eq!(detail["group"]["id"], group["id"]);
+    assert_eq!(detail["group"]["short_id"], short);
+    assert!(
+        detail["processes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["identity"]["pid"] == std::process::id())
+    );
+    let output = bree(&["inspect", short]);
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    let summary = text.lines().next().unwrap();
+    assert!(summary.contains("instances · Total") && summary.contains(short));
+    assert!(!text.contains("Object ID:") && !text.contains("Unix ms"));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn missing_pid_and_short_id_return_structured_runtime_errors() {
+    for id in ["4294967295", "ffffffffffffffffffffffffffffffff"] {
+        let output = bree(&["inspect", id, "--json"]);
+        assert_eq!(output.status.code(), Some(1));
+        let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(error["schema_version"], 2);
+        assert_eq!(error["error"]["code"], "runtime_error");
+        assert!(!output.stderr.is_empty());
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn text_uses_local_clock_and_reserves_definitions_for_doctor() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let home = TestHome::new();
+    let epoch = || {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    for (timezone, offset) in [("UTC0", 0), ("EST5", -5 * 3600)] {
+        let start = epoch();
+        let output = home
+            .command()
+            .env("TZ", timezone)
+            .arg("status")
+            .output()
+            .unwrap();
+        let end = epoch();
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(!text.contains("Definition:") && !text.contains("Unix ms"));
+        assert!(
+            (start..=end).any(|seconds| {
+                let day = (seconds as i64 + offset).rem_euclid(86400);
+                text.contains(&format!(
+                    "Sampled at: {:02}:{:02}:{:02}",
+                    day / 3600,
+                    day / 60 % 60,
+                    day % 60
+                ))
+            }),
+            "{text}"
+        );
+    }
+    let pid = std::process::id().to_string();
+    for args in [
+        vec!["list", "--limit", "1"],
+        vec!["inspect", &pid],
+        vec!["watch", "--count", "2", "--interval", "1"],
+    ] {
+        let output = home.run(&args);
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(!text.contains("Definition:") && !text.contains("Unix ms"));
+        let times: Vec<_> = text
+            .lines()
+            .filter_map(|line| line.strip_prefix("Sampled at: "))
+            .collect();
+        assert_eq!(times.len(), if args[0] == "watch" { 2 } else { 1 });
+        for time in times {
+            let clock = &time[..8];
+            assert_eq!(clock.as_bytes()[2], b':');
+            assert_eq!(clock.as_bytes()[5], b':');
+            assert!(
+                clock
+                    .bytes()
+                    .enumerate()
+                    .all(|(i, c)| [2, 5].contains(&i) || c.is_ascii_digit())
+            );
+        }
+    }
+    let doctor = home.run(&["doctor", "--json"]);
+    assert!(doctor.status.success());
+    let report: Value = serde_json::from_slice(&doctor.stdout).unwrap();
+    let text = String::from_utf8(home.run(&["doctor"]).stdout).unwrap();
+    for note in report["notes"].as_array().unwrap() {
+        assert!(text.contains(note.as_str().unwrap()));
+    }
+    assert!(text.contains("Definition: Used ="));
 }
 
 #[cfg(target_os = "macos")]
@@ -466,6 +621,20 @@ fn all_commands_leave_an_empty_home_unchanged() {
         ]
     );
     let id = own["id"].as_str().unwrap();
+    let pid = std::process::id().to_string();
+    let short = sample["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|group| {
+            group["process_ids"]
+                .as_array()
+                .unwrap()
+                .contains(&own["id"])
+        })
+        .unwrap()["short_id"]
+        .as_str()
+        .unwrap();
     for args in [
         vec!["status"],
         vec!["status", "--json"],
@@ -473,6 +642,10 @@ fn all_commands_leave_an_empty_home_unchanged() {
         vec!["list", "--json"],
         vec!["inspect", id],
         vec!["inspect", id, "--json"],
+        vec!["inspect", &pid],
+        vec!["inspect", &pid, "--json"],
+        vec!["inspect", short],
+        vec!["inspect", short, "--json"],
         vec!["watch", "--count", "2", "--interval", "1"],
         vec!["watch", "--json", "--count", "2", "--interval", "1"],
         vec!["doctor"],

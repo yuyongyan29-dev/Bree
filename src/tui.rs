@@ -973,6 +973,11 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             chunks[4],
         );
     } else {
+        let id_width = groups
+            .iter()
+            .map(|group| group.short_id.len())
+            .max()
+            .unwrap_or(8) as u16;
         let rows: Vec<_> = groups
             .iter()
             .map(|group| {
@@ -981,6 +986,7 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                         safe_text(&group.name),
                         display_memory(&group.memory_bytes, true),
                         group.process_ids.len().to_string(),
+                        safe_text(&group.short_id),
                     ]
                 } else {
                     vec![
@@ -988,7 +994,7 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
                         metric_bytes(&group.memory_bytes),
                         group.process_ids.len().to_string(),
                         category_name(group.category).into(),
-                        safe_text(&group.metric_kind),
+                        safe_text(&group.short_id),
                     ]
                 };
                 Row::new(values)
@@ -996,22 +1002,23 @@ fn render_resources(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             .collect();
         let (header, widths) = if compact {
             (
-                vec!["Name", "Memory", "Procs"],
+                vec!["Name", "Memory", "Procs", "ID"],
                 vec![
                     Constraint::Min(10),
                     Constraint::Length(9),
                     Constraint::Length(5),
+                    Constraint::Length(id_width),
                 ],
             )
         } else {
             (
-                vec!["Name", "Memory", "Procs", "Type", "Metric"],
+                vec!["Name", "Memory", "Procs", "Type", "ID"],
                 vec![
                     Constraint::Min(16),
                     Constraint::Length(12),
                     Constraint::Length(5),
                     Constraint::Length(11),
-                    Constraint::Length(12),
+                    Constraint::Length(id_width),
                 ],
             )
         };
@@ -1086,7 +1093,6 @@ fn process_detail(process: &ProcessInfo) -> Vec<Line<'static>> {
             safe_text(&process.metric_kind)
         )),
         Line::from(format!("Validity {:?}", process.memory_bytes.status)),
-        Line::from(format!("Instance {}", safe_text(&process.id))),
         Line::from(format!(
             "Identity {:?} · started {} s + {} µs",
             process.identity.status,
@@ -1183,6 +1189,7 @@ fn render_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
                 group.process_ids.len(),
                 category_name(group.category)
             )));
+            lines.push(Line::from(format!("ID {}", safe_text(&group.short_id))));
             lines.push(Line::from(format!(
                 "Metric {}",
                 safe_text(&group.metric_kind)
@@ -1283,6 +1290,7 @@ mod tests {
             }],
             groups: vec![OccupancyGroup {
                 id: "group".into(),
+                short_id: "1a2b3c4d".into(),
                 name: "中文应用".into(),
                 category: Category::Application,
                 memory_bytes: Metric::ok(100 * 1024 * 1024),
@@ -1305,6 +1313,29 @@ mod tests {
         terminal.draw(|frame| render(frame, app)).unwrap();
         let text = buffer_text(terminal.backend().buffer());
         (text, terminal)
+    }
+
+    #[test]
+    fn short_group_ids_fit_compact_and_wide_views_without_changing_selection() {
+        for width in [48, 100] {
+            let mut sample = snapshot();
+            sample.groups[0].id = "app:p:full-boot-session:42:10:1".into();
+            crate::query::assign_short_ids(&mut sample.groups);
+            let full = sample.groups[0].id.clone();
+            let short = sample.groups[0].short_id.clone();
+            let mut app = App::new(true);
+            app.color_depth = ColorDepth::None;
+            app.received(Ok(sample));
+            let (text, _) = screen(&mut app, width, 16);
+            assert!(text.contains(&short), "{text}");
+            assert!(!text.contains(&full));
+            assert_eq!(app.selected_group.as_deref(), Some(full.as_str()));
+            app.page = Page::Detail(full.clone());
+            let (text, _) = screen(&mut app, width, 16);
+            assert!(text.contains(&short), "{text}");
+            assert!(!text.contains("source"));
+            assert_eq!(app.page, Page::Detail(full));
+        }
     }
 
     fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {

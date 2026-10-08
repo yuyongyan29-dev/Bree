@@ -114,7 +114,8 @@ impl Collector {
                 .cmp(&a.memory_bytes.value)
                 .then(a.id.cmp(&b.id))
         });
-        let groups = occupancy_groups(&processes);
+        let mut groups = occupancy_groups(&processes);
+        crate::query::assign_short_ids(&mut groups);
         let coverage = Coverage {
             enumerated_processes: processes.len(),
             readable_memory_processes: processes
@@ -131,7 +132,7 @@ impl Collector {
                 "Read failures retain missing status; only metrics with the same complete instance identity enter the sample.".into(),
                 "App attribution uses the AppKit main app and executable paths in the same bundle; AI tasks are not inferred from names or parent chains."
                     .into(),
-                "Dynamic app information requires main-thread run-loop updates; foreground markers are observations only, and all actions are disabled.".into(),
+                "Dynamic app information requires main-thread run-loop updates; foreground markers are observations only.".into(),
             ],
         };
         if coverage.readable_memory_processes < coverage.enumerated_processes {
@@ -350,6 +351,7 @@ fn occupancy_groups(processes: &[ProcessInfo]) -> Vec<OccupancyGroup> {
             (
                 OccupancyGroup {
                     id,
+                    short_id: String::new(),
                     name: name.clone(),
                     category: process.category,
                     memory_bytes: process.memory_bytes.clone(),

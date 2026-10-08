@@ -1,4 +1,5 @@
 use crate::model::{Category, Metric, Pressure, Snapshot, Validity, safe_text};
+use crate::query::Inspection;
 use std::io::{self, Write};
 
 pub fn bytes(value: u64) -> String {
@@ -58,27 +59,43 @@ pub fn write_text(value: &str) -> Result<(), String> {
     writeln!(handle, "{value}").map_err(|e| e.to_string())
 }
 
+pub fn local_time(unix_ms: u64) -> String {
+    let Ok(seconds) = libc::time_t::try_from(unix_ms / 1_000) else {
+        return "Unknown".into();
+    };
+    let mut local = std::mem::MaybeUninit::<libc::tm>::uninit();
+    // SAFETY: both pointers refer to valid storage; the output is only read
+    // after localtime_r reports success. No process-global time buffer is used.
+    if unsafe { libc::localtime_r(&seconds, local.as_mut_ptr()) }.is_null() {
+        return "Unknown".into();
+    }
+    let local = unsafe { local.assume_init() };
+    format!(
+        "{:02}:{:02}:{:02}",
+        local.tm_hour, local.tm_min, local.tm_sec
+    )
+}
+
 pub fn status_text(snapshot: &Snapshot) -> String {
     let memory = &snapshot.system;
     format!(
-        "bree · Read-only Alpha\nMemory pressure: {}\nUsed {} / Total {}\nCompressed {} · Swap {}\nSampled at: {} Unix ms · Collection {} ms\nCoverage: {} enumerated, {} readable memory, {} reliable identities\nDefinition: {}\nApp-group totals do not equal reclaimable memory.",
+        "bree · Read-only Alpha\nMemory pressure: {}\nUsed {} / Total {}\nCompressed {} · Swap {}\nSampled at: {} · Collection {} ms\nCoverage: {} enumerated, {} readable memory, {} reliable identities\nApp-group totals do not equal reclaimable memory.",
         pressure_text(&memory.pressure),
         metric_bytes(&memory.used_bytes),
         metric_bytes(&memory.total_bytes),
         metric_bytes(&memory.compressed_bytes),
         metric_bytes(&memory.swap_used_bytes),
-        snapshot.sampled_at_unix_ms,
+        local_time(snapshot.sampled_at_unix_ms),
         snapshot.collected_in_ms,
         snapshot.coverage.enumerated_processes,
         snapshot.coverage.readable_memory_processes,
-        snapshot.coverage.reliable_identity_processes,
-        safe_text(&memory.used_definition)
+        snapshot.coverage.reliable_identity_processes
     )
 }
 
 pub fn list_text(snapshot: &Snapshot, limit: Option<usize>) -> String {
     let mut text = status_text(snapshot);
-    text.push_str("\n\nMemory\tInstances\tCategory\tName\tObject ID\n");
+    text.push_str("\n\nMemory\tInstances\tCategory\tName\tID\n");
     let count = limit
         .unwrap_or(snapshot.groups.len())
         .min(snapshot.groups.len());
@@ -89,13 +106,7 @@ pub fn list_text(snapshot: &Snapshot, limit: Option<usize>) -> String {
             group.process_ids.len(),
             category_text(group.category),
             safe_text(&group.name),
-            safe_text(&group.id)
-        ));
-    }
-    if count < snapshot.groups.len() {
-        text.push_str(&format!(
-            "Showing {count}/{} groups; omit --limit to see all.\n",
-            snapshot.groups.len()
+            safe_text(&group.short_id)
         ));
     }
     text
@@ -144,18 +155,24 @@ pub fn redact_path(path: &str, home: Option<&str>) -> String {
     clean
 }
 
-pub fn inspect_text(snapshot: &Snapshot, id: &str) -> Result<String, String> {
-    let ids = if let Some(group) = snapshot.groups.iter().find(|g| g.id == id) {
-        group.process_ids.clone()
-    } else if snapshot.processes.iter().any(|p| p.id == id) {
-        vec![id.into()]
-    } else {
-        return Err("The object exited, its identity changed, or its ID is not in this sample; run list again.".into());
-    };
-    let mut result = format!("Sampled at: {} Unix ms\n", snapshot.sampled_at_unix_ms);
-    for process in snapshot.processes.iter().filter(|p| ids.contains(&p.id)) {
-        result.push_str(&format!("\n{} · PID {}\nObject ID: {}\nMemory: {} ({})\nCPU: {}\nIdentity: {:?}, started {}.{}\nPath: {}\nAttribution: {} / {}\nEvidence: {}\n",
-            safe_text(&process.name), process.identity.pid, safe_text(&process.id),
+pub fn inspect_text(snapshot: &Snapshot, inspection: &Inspection<'_>) -> String {
+    let mut result = String::new();
+    if let Some(group) = inspection.group {
+        result.push_str(&format!(
+            "{} · {} instances · Total {} · ID {}\n",
+            safe_text(&group.name),
+            group.process_ids.len(),
+            metric_bytes(&group.memory_bytes),
+            safe_text(&group.short_id)
+        ));
+    }
+    result.push_str(&format!(
+        "Sampled at: {}\n",
+        local_time(snapshot.sampled_at_unix_ms)
+    ));
+    for process in &inspection.processes {
+        result.push_str(&format!("\n{} · PID {}\nMemory: {} ({})\nCPU: {}\nIdentity: {:?}, started {}.{}\nPath: {}\nAttribution: {} / {}\nEvidence: {}\n",
+            safe_text(&process.name), process.identity.pid,
             metric_bytes(&process.memory_bytes), safe_text(&process.metric_kind),
             process.cpu_one_core_percent.value.filter(|_| process.cpu_one_core_percent.status == Validity::Ok)
                 .map(|v| format!("{v:.1}% (one-core basis)")).unwrap_or_else(|| "— / No valid sampling interval yet".into()),
@@ -165,7 +182,7 @@ pub fn inspect_text(snapshot: &Snapshot, id: &str) -> Result<String, String> {
             safe_text(&process.attribution.method), safe_text(&process.attribution.confidence),
             safe_text(&process.attribution.explanation)));
     }
-    Ok(result)
+    result
 }
 
 #[cfg(test)]

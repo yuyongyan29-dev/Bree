@@ -77,6 +77,8 @@ See the [installation guide](docs/installation.md) for updates, uninstalling, cu
 
 Missing or inaccessible data is explicitly marked instead of being reported as zero.
 
+Unattributed processes are grouped by executable path and UID, or by process name and UID when the path is unreadable. Processes with unreadable UIDs remain separate. Developer labels name these groups; native Claude Code includes the version from its installation path, such as `Claude Code 2.1.294`, without executing the program. Application grouping is unchanged, and aggregation does not establish application ownership.
+
 Home's static pixel mascot adds no animation, background process, or extra dependency, and stays out of direct commands and JSON output.
 
 Bree does not install a background service or launch at login. Force quitting and automatic background cleanup are unavailable.
@@ -88,10 +90,21 @@ bree                         # Open the terminal interface
 bree status                  # Show system memory
 bree list --limit 20          # List application and process usage
 bree list --search Safari --sort name  # Find matching groups and sort by name
-bree inspect '<object ID>'    # Inspect an ID returned by list
+bree inspect 12345            # Inspect the process currently using this PID
+bree inspect '<short ID>'     # Inspect a group returned by list
 bree watch                   # Monitor in the foreground
 bree doctor                  # Check capabilities and data availability
 bree license                  # Display the GPL-3.0 license
+```
+
+Text output identifies processes by PID and groups by a stable short ID, also shown in the TUI. `inspect` accepts a PID, group short ID, or full ID. PID input does not detect reuse between commands; full process IDs remain bound to the sampled instance. Short IDs start at 8 hexadecimal characters and lengthen on collisions within the full sample; filtering does not recalculate them. A missing or ambiguous target returns exit code 1 and a structured error with `--json`. Unattributed group IDs remain stable while their grouping key is unchanged; inspection shows current members.
+
+Text samples use local `HH:MM:SS` time. Memory formulas are explained by `doctor`. A group inspection starts with its name, instance count, and total RSS. Example excerpt (illustrative values):
+
+```text
+Sampled at: 14:32:08 · Collection 20 ms
+Memory       Instances  Category      Name                 ID
+128.0 MiB    2          Unattributed  Claude Code 2.1.294   8c73a1de
 ```
 
 Lists are sorted by memory by default; use `--sort name` to sort by group name. Search ignores case and surrounding whitespace. Non-numeric queries match substrings of group names, member process names, or member bundle IDs. Purely numeric queries match only a complete PID, not name substrings or PID prefixes. It does not search paths, full command lines, or environment variables.
@@ -108,7 +121,7 @@ bree list --search Safari --sort name --json
 bree watch --json --count 3
 ```
 
-JSON includes `schema_version: 2` and data validity fields. For `list`, `groups` reflects search, sorting, and `--limit`, while `processes` and `coverage` retain the full sample. The `view` metadata reports `search`, `sort`, `total_groups`, `matched_groups`, and `shown_groups`. Unknown values are `null`. Results go to stdout; diagnostics go to stderr. Command options, metric definitions, and the schema changes are covered in the [user guide](docs/cli.md), currently in Chinese.
+JSON keeps `schema_version: 2`. Metrics contain `value`, `status`, and `reason`; sources are documented centrally in the user guide. Group objects add `short_id`, while full IDs in `id` and `process_ids` and the Unix-millisecond `sampled_at_unix_ms` field retain their meanings. For `list`, `groups` reflects search, sorting, and `--limit`, while `processes` and `coverage` retain the full sample. The `view` metadata reports `search`, `sort`, `total_groups`, `matched_groups`, and `shown_groups`. Unknown values are `null`. Results go to stdout; diagnostics go to stderr. Command options, metric definitions, and the schema changes are covered in the [user guide](docs/cli.md), currently in Chinese.
 
 ## Feedback and contributions
 

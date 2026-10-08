@@ -154,6 +154,7 @@ impl ProcessInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OccupancyGroup {
     pub id: String,
+    pub short_id: String,
     pub name: String,
     pub category: Category,
     pub memory_bytes: Metric<u64>,

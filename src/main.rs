@@ -3,7 +3,7 @@ use bree_cli::{
     collect::Collector,
     model::{SCHEMA_VERSION, Snapshot, safe_text},
     output,
-    query::{GroupSort, compare_groups, group_matches, validate_search},
+    query::{GroupSort, compare_groups, group_matches, resolve_inspect, validate_search},
     tui,
 };
 use clap::{Parser, Subcommand};
@@ -50,7 +50,7 @@ enum Command {
         #[arg(long, value_enum, default_value = "memory")]
         sort: GroupSort,
     },
-    /// Inspect an object ID from list using a fresh sample of the current instance
+    /// Inspect a PID, group short ID or full ID using a fresh sample
     Inspect {
         id: String,
         #[arg(long)]
@@ -264,24 +264,15 @@ fn execute(
         }
         Command::Inspect { id, json } => {
             let exported = output::export_snapshot(&snapshot, true);
-            let mut text = output::inspect_text(&snapshot, &id)?;
+            let inspection = resolve_inspect(&exported, &id)?;
             if json {
-                let group = exported.groups.iter().find(|g| g.id == id);
-                let processes: Vec<_> = exported
-                    .processes
-                    .iter()
-                    .filter(|p| p.id == id || group.is_some_and(|g| g.process_ids.contains(&p.id)))
-                    .collect();
-                let mut report = json!({"schema_version":SCHEMA_VERSION,"sampled_at_unix_ms":snapshot.sampled_at_unix_ms,"group":group,"processes":processes});
+                let mut report = json!({"schema_version":SCHEMA_VERSION,"sampled_at_unix_ms":snapshot.sampled_at_unix_ms,"group":inspection.group,"processes":inspection.processes});
                 add_labels(&mut report, &snapshot);
                 output::write_json(&report)
             } else {
+                let mut text = output::inspect_text(&snapshot, &inspection);
                 for process in snapshot.processes.iter().filter(|process| {
-                    process.id == id
-                        || snapshot
-                            .groups
-                            .iter()
-                            .any(|group| group.id == id && group.process_ids.contains(&process.id))
+                    inspection.processes.iter().any(|member| member.id == process.id)
                 }) {
                     if let Some(label) = label_process(process) {
                         text.push_str(&format!(
@@ -308,6 +299,7 @@ fn execute(
                     "background_service": false
                 },
                 "notes": [
+                    format!("Definition: {}", snapshot.system.used_definition),
                     "Bree inspects and exports memory usage without saving state or quitting applications.",
                     "Developer labels cover only native Claude installations under ~/.local/share/claude/versions/<numeric version> and Codex App CLI paths. They do not establish project ownership, task completion, sharing or permission to stop a task.",
                     "Each supported environment requires testing. A local run does not verify other system versions.",
@@ -318,8 +310,12 @@ fn execute(
                 output::write_json(&report)
             } else {
                 output::write_text(&format!(
-                    "{}\n\nCapabilities: read-only memory inspection and limited developer-tool labels. Bree saves no state and does not quit applications. Background services are disabled.\n{}",
+                    "{}\n\nCapabilities: read-only memory inspection and limited developer-tool labels. Bree saves no state and does not quit applications. Background services are disabled.\n{}\n{}",
                     output::status_text(&snapshot),
+                    report["notes"].as_array().expect("doctor notes").iter()
+                        .filter_map(|note| note.as_str())
+                        .map(|note| format!("· {}", safe_text(note)))
+                        .collect::<Vec<_>>().join("\n"),
                     snapshot
                         .coverage
                         .notes
@@ -357,24 +353,7 @@ fn add_labels(value: &mut serde_json::Value, snapshot: &Snapshot) {
 }
 
 fn list_text(snapshot: &Snapshot, limit: Option<usize>) -> String {
-    let mut text = format!(
-        "{}\n\nMemory\tInstances\tCategory\tName\tObject ID\n",
-        output::status_text(snapshot)
-    );
-    for group in snapshot
-        .groups
-        .iter()
-        .take(limit.unwrap_or(snapshot.groups.len()))
-    {
-        text.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\n",
-            output::metric_bytes(&group.memory_bytes),
-            group.process_ids.len(),
-            output::category_text(group.category),
-            safe_text(&group.name),
-            safe_text(&group.id)
-        ));
-    }
+    let mut text = output::list_text(snapshot, limit);
     text.push_str("Use inspect for individual details. Developer labels do not establish task completion or permission to stop a task.\n");
     text
 }

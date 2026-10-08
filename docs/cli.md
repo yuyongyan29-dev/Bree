@@ -43,8 +43,9 @@ bree status --json
 bree list --limit 20          # 按应用归属分组查看占用
 bree list --search Safari --sort name  # 搜索匹配分组并按名称排序
 bree list --json
-bree inspect '<对象 ID>'     # 使用 list 返回的 ID 查看当前实例
-bree inspect '<对象 ID>' --json
+bree inspect 12345            # 重新采样当前 PID，不检测跨命令的 PID 复用
+bree inspect '<分组短 ID>'    # 使用 list 返回的短 ID 查看当前成员
+bree inspect '<完整 ID>' --json
 bree watch                   # 前台持续观察
 bree watch --json --count 3
 bree doctor                  # 数据覆盖与能力说明
@@ -57,7 +58,17 @@ bree license                 # 离线查看项目许可
 
 查询最多 128 个 Unicode 字符，原输入的首尾空白也计入长度；控制字符和双向格式控制符会被拒绝。TUI 和直接命令使用相同的查询范围与限制。
 
-`list --limit` 限制查询和排序后显示的组数。JSON 的 `groups` 为显示结果，`processes`、`coverage` 仍保留完整样本；搜索不重算分类。`inspect` 会重新采样，只查看仍匹配的当前实例；旧 ID 不会被重新绑定到替代进程，也不可当作停止凭据。
+`list --limit` 限制查询和排序后显示的组数。JSON 的 `groups` 为显示结果，`processes`、`coverage` 仍保留完整样本；搜索不重算分类。
+
+`inspect` 接受 PID、分组短 ID 和完整 ID，每次都会重新采样：
+
+- **PID**：查看当前使用该 PID 的进程，不检测两次命令之间的 PID 复用。采集期间原有的实例一致性检查不变。
+- **分组短 ID**：文本 `list` 与 TUI 显示由完整分组 ID 稳定派生的 8 位小写十六进制 ID；同一样本内发生碰撞时，相关 ID 自动加长到可区分。短 ID 在完整样本上生成，搜索、排序和截断不会改变它；碰撞集合变化时长度可能改变，以当前 `list` 为准。只接受完整的当前短 ID，不支持任意前缀。
+- **完整 ID**：继续用于 JSON 的 `id`、组内 `process_ids` 和 TUI 的精确选中。完整进程 ID 绑定启动会话、PID 与启动时间；失效后不会映射到替代进程。未归属分组的键不变时，完整分组 ID 不随成员增减改变，查看的是当前成员，不代表固定的一批进程实例。
+
+PID 与短 ID 同时匹配、短 ID 匹配多个分组或找不到对象时，命令失败，退出码为 1；`--json` 输出 schema 2 的 `error.code: runtime_error` 和说明文字，诊断仍写 stderr。歧义时可使用 `list --json` 中的完整 ID。所有 ID 只用于查看，不是停止凭据。
+
+进程文本以 PID 标识；分组 `inspect` 的首行先列名称、实例数和总 RSS，再列成员。`status`、`list`、`inspect` 和文本 `watch` 的采样时间显示系统本地时区的 `HH:MM:SS`，JSON 的 `sampled_at_unix_ms` 保持 Unix 毫秒。系统内存公式只在 `doctor` 文本和 JSON notes 中解释；JSON `system.used_definition` 仍保留。
 
 `doctor` 说明数据覆盖与采集能力，不申请系统权限，也不创建或检查持久状态。普通查看无需额外权限，不可读取的进程指标会明确说明。
 
@@ -67,7 +78,7 @@ bree license                 # 离线查看项目许可
 
 CPU 首次采样只建立基线，后续采样使用实际时间差计算单核百分比。采样覆盖数和每个指标的有效性字段说明哪些数据可读。
 
-应用分组基于主应用和 bundle 内安装位置等证据。只有普通应用（AppKit 激活策略为 Regular，通常显示在程序坞中）作为主应用；嵌套在主应用 bundle 内的 helper 应用并入该主应用，独立的菜单栏或后台应用不单独成组，显示为未归属进程。归属冲突与未知进程独立保留，每个进程只加入一组。
+应用分组基于主应用和 bundle 内安装位置等证据。只有普通应用（AppKit 激活策略为 Regular，通常显示在程序坞中）作为主应用；嵌套在主应用 bundle 内的 helper 应用并入该主应用，独立菜单栏、后台及归属冲突的进程仍保持未归属，按同一可执行路径与同一 UID 聚合展示；路径不可读时按同名与同一 UID 合并。不同 UID 不合并，UID 不可读时保留独立实例。每个进程只属于一个分组，合并不代表已确认应用归属。
 
 <a id="development-labels"></a>
 
@@ -80,7 +91,7 @@ CPU 首次采样只建立基线，后续采样使用实际时间差计算单核�
 | Codex CLI | `/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex` |
 | Claude Code | `/Users/<user>/.local/share/claude/versions/<major.minor.patch>`，版本的三段均为 1–9 位 ASCII 数字 |
 
-匹配安装布局，不读取运行时版本或锁定已观察过的版本号；Claude Code 的版本后缀、额外路径层级及其他安装位置不会匹配。标签只解释安装来源，不验证签名、任务所属项目、完成状态、共享关系或可安全回收性；未知的 node、python 等进程不会被猜测为某个 AI 任务。
+无应用归属的分组优先使用可靠的开发工具标签。原生 Claude Code 的名称附带已匹配安装路径中的版本，例如 `Claude Code 2.1.294`；不执行程序查询版本，Codex CLI 保持标签名。匹配安装布局，不读取运行时版本或锁定已观察过的版本号；Claude Code 的版本后缀、额外路径层级及其他安装位置不会匹配。标签只解释安装来源，不验证签名、任务所属项目、完成状态、共享关系或可安全回收性；未知的 node、python 等进程不会被猜测为某个 AI 任务。
 
 ### 指标来源
 
@@ -108,7 +119,7 @@ JSON 的 `schema_version` 为 2。数值内部使用字节，文本显示 MiB／
 
 schema 2 移除了 `list`／`watch`／`inspect` 的 `policy`、所有相关输出的 `policy_error`、`policy_state_valid`，以及 `status` 的 `policy_summary` 和进程对象的 `protection_reasons`、`quit_supported`。`doctor` 不再输出 `rule_storage` 或 `capability_gate_reason`；其 `capabilities` 移除了 `rules_enabled`、`dry_run_enabled`、`cleanup_enabled`、`a1_enabled`、`a2_enabled`、`cleanup_session_enabled`、`history_enabled`，现在只含 `read_only`、`ai_attribution_enabled` 和 `background_service`。
 
-指标不再包含 `source`，来源统一见下表；对象 ID 仍使用完整实例身份；`sampled_at_unix_ms` 仍为 Unix 毫秒时间戳。
+schema 2 在本次未发行的调整中移除所有 `Metric.source`，保留 `value/status/reason`，来源统一见上表；分组新增 `short_id`，`id` 与 `process_ids` 的完整 ID 含义不变。`sampled_at_unix_ms` 仍为 Unix 毫秒时间戳。
 
 stdout 只输出命令结果，诊断写 stderr。默认 `list`／`watch` JSON 省略路径；`inspect` JSON 将用户主目录替换为 `~`，仍可能包含项目名，分享前请检查。
 

@@ -77,6 +77,8 @@ bree
 
 未知或无权限的数据明确标记，不填成零。
 
+未归属进程按同一可执行路径与同一 UID 合并；路径不可读时按同名与同一 UID 合并，UID 不可读时保留独立实例。分组优先使用开发工具标签，原生 Claude Code 附带安装路径中的版本，例如 `Claude Code 2.1.294`，不执行程序查询版本。应用分组方式不变，聚合不代表已确认应用归属。
+
 Home 首页的静态像素吉祥物不增加动画、后台进程或额外依赖，直接命令与 JSON 输出不含图案。
 
 没有后台常驻或开机启动，也不提供强制结束或后台自动清理。
@@ -88,10 +90,21 @@ bree                         # 打开终端界面
 bree status                  # 系统内存概览
 bree list --limit 20          # 应用与进程占用
 bree list --search Safari --sort name  # 搜索匹配分组并按名称排序
-bree inspect '<对象 ID>'     # 使用 list 返回的 ID 查看详情
+bree inspect 12345            # 查看当前使用该 PID 的进程
+bree inspect '<分组短 ID>'    # 查看 list 返回分组的当前成员
 bree watch                   # 前台持续观察
 bree doctor                  # 检查能力与数据可用性
 bree license                  # 查看 GPL-3.0 许可
+```
+
+文本以 PID 标识进程，以稳定的短 ID 标识分组，TUI 也显示分组短 ID。`inspect` 接受 PID、分组短 ID 和完整 ID：PID 输入不检测跨命令的 PID 复用，完整进程 ID 仍绑定采样实例。短 ID 默认 8 位十六进制，同一完整样本内碰撞时自动加长，显示筛选不重新生成。对象缺失或有歧义时退出码为 1，`--json` 返回结构化错误。未归属分组的键不变时 ID 保持稳定，查看的是当前成员。
+
+文本采样时间显示本地 `HH:MM:SS`，内存公式由 `doctor` 解释。分组详情先列名称、实例数和总 RSS。输出节选（数值仅作示例）：
+
+```text
+Sampled at: 14:32:08 · Collection 20 ms
+Memory       Instances  Category      Name                 ID
+128.0 MiB    2          Unattributed  Claude Code 2.1.294   8c73a1de
 ```
 
 列表默认按内存占用排序，`--sort name` 可改为按分组名排序。查询忽略首尾空白与大小写，非纯数字查询按分组名、成员进程名或成员 bundle ID 做子串匹配；纯数字查询只按完整 PID 精确匹配，不匹配名称子串或 PID 前缀，不搜索路径、完整命令行或环境变量。
@@ -108,7 +121,7 @@ bree list --search Safari --sort name --json
 bree watch --json --count 3
 ```
 
-JSON 使用 `schema_version: 2` 并保留数据有效性。`list` 的 `groups` 为查询、排序与 `--limit` 后的显示结果，`processes`、`coverage` 保留完整样本；`view` 元数据含 `search`、`sort`、`total_groups`、`matched_groups` 和 `shown_groups`。未知值为 `null`；stdout 只输出结果，诊断写入 stderr。命令选项、指标定义与 schema 变更见 [完整使用说明](docs/cli.md)。
+JSON 保持 `schema_version: 2`。指标包含 `value`、`status`、`reason`，来源在使用说明中集中记录；分组新增 `short_id`，`id` 与 `process_ids` 中的完整 ID 以及 Unix 毫秒字段 `sampled_at_unix_ms` 含义不变。`list` 的 `groups` 为查询、排序与 `--limit` 后的显示结果，`processes`、`coverage` 保留完整样本；`view` 元数据含 `search`、`sort`、`total_groups`、`matched_groups` 和 `shown_groups`。未知值为 `null`；stdout 只输出结果，诊断写入 stderr。命令选项、指标定义与 schema 变更见 [完整使用说明](docs/cli.md)。
 
 ## 反馈与贡献
 
