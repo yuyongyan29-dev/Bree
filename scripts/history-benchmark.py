@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure real read-only CLI/TUI history paths with a private near-10 MiB journal.
 
-Use scripts/p5-check.py for formal measurements: it holds the absolute shared
+Use scripts/stability-check.py for formal measurements: it holds the absolute shared
 native-experiment lock until children are reaped. Direct callers must hold that
 same lock. This script does not acquire a nested lock. Python is a verification
 requirement only; it is not a Bree runtime dependency.
@@ -38,7 +38,7 @@ def encode_record(event, data, timestamp):
 
 def synthetic_result(run_id, timestamp):
     """Valid historical data with no live process identity or resource claims."""
-    missing = {"value": None, "status": "unknown", "source": "p5 synthetic history fixture",
+    missing = {"value": None, "status": "unknown", "source": "stability synthetic history fixture",
                "reason": "Synthetic fixture; no live resource observation was made"}
     system = {key: dict(missing) for key in ("total_bytes", "used_bytes", "compressed_bytes",
                                            "swap_used_bytes", "cached_bytes", "pressure")}
@@ -312,7 +312,7 @@ def summarize(rows, field):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=Path("target/release/bree"))
-    parser.add_argument("--output", type=Path, default=Path(".artifacts/p5/history/history.json"))
+    parser.add_argument("--output", type=Path, default=Path(".artifacts/stability/history/history.json"))
     parser.add_argument("--runs", type=int, default=20)
     args = parser.parse_args(argv)
     if args.runs < 20:
@@ -327,7 +327,7 @@ def main(argv=None):
                          "Timings include actual CLI parsing or TUI rendering and PTY transport",
                          "Reload timing includes opening detail because unchanged reload emits no visible frame",
                          "Warm filesystem cache is uncontrolled; this is not a cold-cache claim",
-                         "No history response budget is specified by P5; measurements do not invent one",
+                         "No history response budget is specified; measurements do not invent one",
                          "Private PTY cannot verify physical terminal rendering or user perception",
                          "Read-only evidence is unchanged files plus replay_enabled=false and synthetic identity-free targets; no syscall audit"]}
     try:

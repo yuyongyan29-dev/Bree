@@ -21,7 +21,7 @@ def bree_environment(data_dir):
 def empty_bree_environment(output=None):
     """Keep a fresh private store beside evidence until owned children finish."""
     parent = (Path(output).resolve().parent if output is not None else
-              Path(__file__).resolve().parent.parent / ".artifacts/p5")
+              Path(__file__).resolve().parent.parent / ".artifacts/stability")
     parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="bree-check-", dir=parent) as temporary:
         yield bree_environment(Path(temporary) / "store")

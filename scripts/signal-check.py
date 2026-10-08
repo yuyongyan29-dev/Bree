@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bounded cancellation checks on private Bree children; retain failed evidence.
 
-The P5 runner holds the shared native-experiment lock around this script. For
+The stability runner holds the shared native-experiment lock around this script. For
 standalone experiments the caller must hold that same lock through child reaping.
 """
 import argparse

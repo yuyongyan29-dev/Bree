@@ -76,7 +76,7 @@ impl PtyChild {
             .env(
                 "BREE_DATA_DIR",
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join(".artifacts/p5")
+                    .join(".artifacts/stability")
                     .join(format!("signal-test-data-{}", std::process::id())),
             )
             .stdin(Stdio::from(slave.try_clone().unwrap()))

@@ -63,9 +63,9 @@ BREE_DATA_DIR="$PWD/.artifacts/dev-data" ./target/release/bree
 只读稳定性与性能验收可运行统一入口。`--lock` 必须是所有并行工作区共用的绝对路径，且父目录已存在；不要为每个工作区创建不同锁或删除锁文件。`--output` 必须是本工作区 `target/` 或 `.artifacts/` 下的新目录，避免覆盖已有证据。
 
 ```sh
-python3 scripts/p5-check.py \
+python3 scripts/stability-check.py \
   --lock /absolute/shared/native-experiment.lock \
-  --output "$PWD/.artifacts/p5/run-001"
+  --output "$PWD/.artifacts/stability/run-001"
 ```
 
 入口重新构建 release，运行现有 benchmark、终端、主题、信号检查，以及历史读取与 Home／资源页长测；它在实测期间持有排他锁，直到本次子进程回收。Home 静置 5 分钟，显式进入 TUI 资源页与独立 watch 各观察 10 分钟。约 10 MiB 的历史 fixture 位于本次输出目录，只调用历史读取。结果汇总保留源码清单、二进制 SHA、命令、退出码和原始日志，分别标记 failed、not-run 与 unknown；原始日志可能包含本机应用名称，不能提交。不要与构建、其他性能采样或原生 UI 实验同时运行测量。

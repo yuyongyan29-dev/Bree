@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Observe Home, menu-entered Resources, and interactive watch in private PTYs.
 
-For formal results run through p5-check.py, which identifies the binary and holds
+For formal results run through stability-check.py, which identifies the binary and holds
 the shared absolute experiment lock until all owned children are reaped. Direct
 short runs are diagnostic only. Raw screens can include application names: keep
-this result and its sibling evidence under ignored .artifacts/p5/.
+this result and its sibling evidence under ignored .artifacts/stability/.
 """
 import argparse
 import fcntl
@@ -308,7 +308,7 @@ def observe(args, output, env):
                          "terminal cells and bytes are evidence, not physical terminal visual acceptance",
                          "process reaping proves this Bree process and its threads exited",
                          "RSS trends describe only this interval; cannot prove absence of leaks",
-                         "formal use requires p5-check.py shared-lock/build wrapper"]}
+                         "formal use requires stability-check.py shared-lock/build wrapper"]}
     report.update({name: {"status": "not-run", "reason": "scenario not started"}
                    for name in ("home", "resources", "watch")})
     error = None
@@ -364,7 +364,7 @@ def cancelled(*_):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=Path("target/release/bree"))
-    parser.add_argument("--output", type=Path, default=Path(".artifacts/p5/soak.json"))
+    parser.add_argument("--output", type=Path, default=Path(".artifacts/stability/soak.json"))
     parser.add_argument("--home-seconds", type=float, default=300)
     parser.add_argument("--resources-seconds", type=float, default=600)
     parser.add_argument("--watch-seconds", type=float, default=600)

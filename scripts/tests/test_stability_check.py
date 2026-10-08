@@ -9,9 +9,9 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-SPEC = importlib.util.spec_from_file_location("p5_check", Path(__file__).parents[1] / "p5-check.py")
-P5 = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(P5)
+SPEC = importlib.util.spec_from_file_location("stability_check", Path(__file__).parents[1] / "stability-check.py")
+STABILITY = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(STABILITY)
 
 
 class EvidenceTests(unittest.TestCase):
@@ -21,56 +21,56 @@ class EvidenceTests(unittest.TestCase):
         child.poll.return_value = None
         def register(signum, handler):
             handlers[signum] = handler
-            return P5.signal.SIG_DFL
+            return STABILITY.signal.SIG_DFL
         def spawn(*_args, **_kwargs):
-            handlers[P5.signal.SIGTERM](P5.signal.SIGTERM, None)
+            handlers[STABILITY.signal.SIGTERM](STABILITY.signal.SIGTERM, None)
             return child
         with tempfile.TemporaryDirectory() as directory, \
-                patch.object(P5.signal, "signal", side_effect=register), \
-                patch.object(P5.subprocess, "Popen", side_effect=spawn), \
-                patch.object(P5.os, "killpg") as send, \
-                patch.object(P5, "group_alive", return_value=False):
-            row = P5.run_command("cancel", ["unused"], Path(directory), {}, 780)
-        send.assert_called_once_with(child.pid, P5.signal.SIGTERM)
+                patch.object(STABILITY.signal, "signal", side_effect=register), \
+                patch.object(STABILITY.subprocess, "Popen", side_effect=spawn), \
+                patch.object(STABILITY.os, "killpg") as send, \
+                patch.object(STABILITY, "group_alive", return_value=False):
+            row = STABILITY.run_command("cancel", ["unused"], Path(directory), {}, 780)
+        send.assert_called_once_with(child.pid, STABILITY.signal.SIGTERM)
         self.assertEqual(row["status"], "failed")
-        self.assertEqual(row["interrupted_by"], [P5.signal.SIGTERM])
+        self.assertEqual(row["interrupted_by"], [STABILITY.signal.SIGTERM])
         self.assertTrue(row["owned_group_reaped"])
 
     def test_final_binary_replacement_cannot_return_success(self):
         report = {"checks": {"soak": {"status": "passed"}, "visual": {"status": "not-run"}},
                   "source_unchanged_after_checks": True,
                   "binary_unchanged_after_checks": True, "build_consistency": "passed"}
-        self.assertTrue(P5.automated_success(report))
+        self.assertTrue(STABILITY.automated_success(report))
         report["binary_unchanged_after_checks"] = False
-        self.assertFalse(P5.automated_success(report))
+        self.assertFalse(STABILITY.automated_success(report))
         report.pop("binary_unchanged_after_checks")
-        self.assertFalse(P5.automated_success(report))
+        self.assertFalse(STABILITY.automated_success(report))
 
     def test_missing_and_malformed_results_cannot_pass(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "result.json"
             row = {"status": "passed"}
-            P5.load_result(row, path)
+            STABILITY.load_result(row, path)
             self.assertEqual(row["status"], "failed")
             self.assertEqual(row["result_status"], "unknown")
             path.write_text("{")
             row = {"status": "passed"}
-            P5.load_result(row, path)
+            STABILITY.load_result(row, path)
             self.assertEqual(row["status"], "failed")
             path.write_text(json.dumps({"some_metric": None}))
             row = {"status": "passed"}
-            P5.load_result(row, path)
+            STABILITY.load_result(row, path)
             self.assertIsNone(row["result"]["some_metric"])
 
     def test_exit_failure_and_timeout_are_retained(self):
         with tempfile.TemporaryDirectory() as directory:
-            row = P5.run_command("failed", [sys.executable, "-c", "print('evidence'); raise SystemExit(7)"],
+            row = STABILITY.run_command("failed", [sys.executable, "-c", "print('evidence'); raise SystemExit(7)"],
                                  Path(directory), os.environ.copy(), 5)
             self.assertEqual(row["status"], "failed")
             self.assertEqual(row["exit_code"], 7)
             self.assertIn("evidence", Path(row["log"]).read_text())
             self.assertTrue(row["owned_group_reaped"])
-            row = P5.run_command("timeout", [sys.executable, "-c", "import time; time.sleep(5)"],
+            row = STABILITY.run_command("timeout", [sys.executable, "-c", "import time; time.sleep(5)"],
                                  Path(directory), os.environ.copy(), .05)
             self.assertEqual(row["status"], "failed")
             self.assertEqual(row["error"], "command timed out")
@@ -85,10 +85,10 @@ class EvidenceTests(unittest.TestCase):
                 "import fcntl,sys; f=open(sys.argv[1], 'r+'); "
                 "fcntl.flock(f, fcntl.LOCK_EX|fcntl.LOCK_NB)"), str(path)]
             events = []
-            with P5.experiment_lock(path, events) as fd:
+            with STABILITY.experiment_lock(path, events) as fd:
                 result = subprocess.run(probe, capture_output=True)
                 self.assertNotEqual(result.returncode, 0)
-                row = P5.run_command("owned", [sys.executable, "-c", "print('done')"],
+                row = STABILITY.run_command("owned", [sys.executable, "-c", "print('done')"],
                                      Path(directory), os.environ.copy(), 5, fd)
                 self.assertTrue(row["owned_group_reaped"])
                 self.assertNotEqual(subprocess.run(probe, capture_output=True).returncode, 0)
@@ -99,7 +99,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_relative_lock_is_rejected(self):
         with self.assertRaises(ValueError):
-            with P5.experiment_lock(Path("relative-lock"), []):
+            with STABILITY.experiment_lock(Path("relative-lock"), []):
                 self.fail("relative lock was accepted")
 
 
