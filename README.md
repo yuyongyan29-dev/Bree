@@ -26,7 +26,7 @@
 
 Bree brings system memory pressure, application usage, and process details into a terminal interface you can navigate with your keyboard. Find what is using memory, inspect the evidence behind each application's grouping and metrics, or follow changes with direct commands and JSON output.
 
-**Current version: `0.3.0-alpha.6`. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. Application quitting is disabled: this version does not stop applications. Rules and cleanup commands provide previews and session summaries.**
+**Current version: `0.3.0-alpha.6`. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. Application quitting is disabled: this version does not stop applications. Rules and previews explain how each application is classified; the `clean` command only records previews and zero-request sessions.**
 
 <!-- screenshot: TUI Home and Resources -->
 
@@ -97,7 +97,7 @@ bree license                  # Display the GPL-3.0 license
 
 Lists are sorted by memory by default; use `--sort name` to sort by group name. Search ignores case and surrounding whitespace. Non-numeric queries match substrings of group names, member process names, or member bundle IDs. Purely numeric queries match only a complete PID, not name substrings or PID prefixes. It does not search paths, full command lines, or environment variables.
 
-In the **Memory** page, press **/** to edit a search, **Enter** to apply it, or **Esc** to discard edits and keep the previous search. Outside the editor, **Esc** first clears an applied search, then returns home. **Ctrl+U** clears the input and **Backspace** deletes one character. **Q** is text while editing; **Ctrl+C** always quits. Applied searches work with filters, sorting, and refresh. Search changes only the displayed list, not rules, classifications, or cleanup candidates.
+In the **Memory** page, press **/** to edit a search, **Enter** to apply it, or **Esc** to discard edits and keep the previous search. Outside the editor, **Esc** first clears an applied search, then returns home. **Ctrl+U** clears the input and **Backspace** deletes one character. **Q** is text while editing; **Ctrl+C** always quits. Applied searches work with filters, sorting, and refresh. Search changes only the displayed list, not rules or classifications.
 
 **Up/Down** select · **Enter** open · **R** refresh · **S** settings · **Q** quit outside search editing. The minimum interactive window size is 48 columns by 16 rows.
 
