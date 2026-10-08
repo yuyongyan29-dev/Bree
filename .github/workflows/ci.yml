@@ -32,9 +32,10 @@ jobs:
         run: cargo test --locked
       - name: Script regression tests
         run: python3 -m unittest discover -s scripts/tests
-      - name: Installer tests
+      - name: Installer and release tooling tests
         run: |
-          sh -n distribution/install.sh distribution/package.sh
+          sh -n distribution/install.sh distribution/package.sh distribution/notarize.sh
           python3 distribution/tests/test_install.py
+          python3 distribution/tests/test_release.py
       - name: Release build
         run: cargo build --locked --release
