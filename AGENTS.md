@@ -42,6 +42,7 @@ CLI 与 TUI 共用采集、查询、规则和会话逻辑；修复共同问题�
 
 - 未知、无权限、不支持、失效与真实零值分开处理，保留 `Metric` 的 `value/status/source/reason`。内部使用字节，文本使用 MiB／GiB；进程统一使用 RSS，不把分组总量当作系统已用或可回收内存。
 - 每个进程只属于一个分组；归属冲突与未知对象明确保留。不依据名称或高内存占用推断某个 AI 任务已完成。CPU 首次采样只建基线，后续使用实际时间差。
+- 只有 AppKit 激活策略为 Regular 的普通应用能作为分组主应用；嵌套在其 bundle 内的 helper 应用并入该应用，菜单栏与后台应用保持未归属。开发工具标签按安装布局匹配，不锁定单个版本号；具体规则见 [使用说明](docs/cli.md)。
 - 搜索和排序使用共享 `src/query.rs`。搜索仅改变显示结果，不改变分类、规则或清理候选；`list` 的 `groups` 可筛选和截断，`processes`、`coverage`、`policy` 保留完整样本。
 - 保持已声明的 JSON schema、有效性字段和退出码契约；不静默改变现有字段含义。stdout 只输出结果，诊断写 stderr，`watch --json` 保持 JSONL。变更对应检查在 `tests/cli_contract.rs`。
 - 复用 `safe_text` 和路径脱敏逻辑处理外部名称与输出；默认导出不暴露路径，不采集或记录完整命令行、环境变量、提示词与聊天内容。
@@ -71,6 +72,9 @@ cargo test --locked
 
 需要运行 release 二进制或验证打包时先执行 `cargo build --locked --release`，不要把旧构建的运行结果当作本次改动的验证。
 
+定位失败时改用 `cargo test --locked --no-fail-fast`：默认命令在第一个失败的测试二进制后停止，后续集成测试不会运行，结果会被隐藏。
+
+- 新增或修改的测试不依赖开发者终端（`TERM`、`COLORTERM`、`NO_COLOR`）或真实数据目录：启动子进程时显式设置这些变量与独立的 `BREE_DATA_DIR`，单元测试在代码中固定相关配置。否则可能出现本机失败而 CI 通过（或相反）的结果。
 - TUI 输入、主题或终端生命周期改动：按影响选用 `scripts/terminal-check.py`、`scripts/theme-check.py`、`scripts/signal-check.py`，结合 `tests/tui_signals.rs`；PTY 测试不能代替真实终端的视觉检查。
 - 采集或刷新性能改动：使用 `tests/collection_live.rs`、`tests/cpu_load.rs` 及相应的 benchmark／soak 脚本，记录平台与实际测量结果。先阅读脚本参数与副作用，再运行。
 - 原生退出实验只操作本次自建的 `tests/fixtures/QuitFixture.swift` 应用，入口是 `scripts/probe-quit.zsh`；不拿用户正在使用的应用做隐式测试目标。
@@ -82,6 +86,13 @@ cargo test --locked
   ```
 
 - 纯文档改动核对事实、路径与 Markdown，并运行 `git diff --check`，无需无关的构建或原生实验。交付说明只报告实际执行的验证，注明未验证的平台或交互。
+
+## 并行工作区与分支
+
+- 并行任务在 `../Bree-worktrees/` 下使用独立工作区，分支以 `codex/` 等前缀命名。每个工作区与分支同一时间只有一个写入者。
+- 未经该工作区负责人同意，不提交、rebase、暂存或丢弃其他工作区的未提交改动。需要临时移动改动时先备份，完成后逐项核对。
+- 提交、推送、rebase 或改写分支前，重新查看 `git status` 与最近提交；出现不是自己造成的文件、提交或分支变化时，停止受影响步骤并报告。
+- 合并到 `main` 的 PR 使用 merge commit，与既有历史一致；仓库在合并后自动删除远程头分支，本地分支需另行清理。
 
 ## 仓库与发行
 
