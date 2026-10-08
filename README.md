@@ -26,7 +26,7 @@
 
 Bree brings system memory pressure, application usage, and process details into a terminal interface you can navigate with your keyboard. Find what is using memory, inspect the evidence behind each application's grouping and metrics, or follow changes with direct commands and JSON output.
 
-**Current version: `0.3.0-alpha.6`. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. Application quitting is disabled: this version does not stop applications. Rules and previews explain how each application is classified; the `clean` command only records previews and zero-request sessions.**
+**Current version: `0.3.0-alpha.7`. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. Application quitting is disabled: this version does not stop applications. Rules and previews explain how each application is classified; the `clean` command only records previews and zero-request sessions.**
 
 <!-- screenshot: TUI Home and Resources -->
 
