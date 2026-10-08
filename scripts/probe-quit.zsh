@@ -1,13 +1,17 @@
 #!/bin/zsh
 set -euo pipefail
 TASK_CLI_ROOT=${0:A:h:h}
+if (( $# >= 1 && $# <= 2 )) && [[ "$1" == "--p2" ]]; then
+  shift
+  exec /usr/bin/python3 "$TASK_CLI_ROOT/tests/fixtures/p2_driver.py" "$@"
+fi
 TASK_SUITE_ARGS=()
 TASK_SUITE_PREFIX=""
 if (( $# == 1 )) && [[ "$1" == "--m3" ]]; then
   TASK_SUITE_ARGS=(--m3)
   TASK_SUITE_PREFIX="m3-"
 elif (( $# != 0 )); then
-  print -u2 -- "usage: zsh scripts/probe-quit.zsh [--m3]"
+  print -u2 -- "usage: zsh scripts/probe-quit.zsh [--m3|--p2 [case]]"
   exit 64
 fi
 TASK_RUN_ROOT="$TASK_CLI_ROOT/.artifacts/quit-probe/${TASK_SUITE_PREFIX}$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -62,16 +66,17 @@ run_logged cargo build --locked --manifest-path "$TASK_CLI_ROOT/Cargo.toml" --ex
 print -r -- "command: quit_probe [self-built fixture] [run-directory] $TASK_SUITE_ARGS" >> "$TASK_COMMAND_LOG"
 TASK_PROBE_EXIT=0
 TASK_SAFE_TO_CLEAN=0
-"$TASK_CLI_ROOT/target/debug/examples/quit_probe" \
+/usr/bin/python3 "$TASK_CLI_ROOT/tests/fixtures/p2_lock.py" \
+  "$TASK_CLI_ROOT/.artifacts/native-experiment.lock" \
+  "$TASK_CLI_ROOT/target/debug/examples/quit_probe" \
   "$TASK_APP_ROOT/Contents/MacOS/BreeQuitFixture" "$TASK_RUN_ROOT" "${TASK_SUITE_ARGS[@]}" \
   > "$TASK_RUN_ROOT/controller.jsonl" 2> "$TASK_RUN_ROOT/controller.stderr" || TASK_PROBE_EXIT=$?
 print -r -- "exit_code: $TASK_PROBE_EXIT" >> "$TASK_COMMAND_LOG"
 
-# Only remove task-created binaries after the controller observed natural child exits.
-# If it failed early, leave the fixture binary until its own 23s safety timer has run.
-if (( TASK_PROBE_EXIT != 0 )); then
-  sleep 25
+# Only a positive wrapper recovery confirmation permits deleting this build.
+# A failed wrapper without confirmation leaves binaries and evidence intact.
+if [[ -f "$TASK_RUN_ROOT/native-recovery-confirmed.json" ]]; then
+  TASK_SAFE_TO_CLEAN=1
 fi
-TASK_SAFE_TO_CLEAN=1
 print -r -- "$TASK_RUN_ROOT"
 exit "$TASK_PROBE_EXIT"

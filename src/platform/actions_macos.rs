@@ -14,13 +14,59 @@ struct Handle {
 pub(super) struct NativeBackend {
     collector: Collector,
     handles: Vec<Handle>,
+    // Compiled only into the isolated P2 test library, never the CLI library.
+    #[cfg(test)]
+    fixture: Option<(ProcessIdentity, AppScope)>,
 }
 impl NativeBackend {
     pub(super) fn new() -> Result<Self, String> {
         Ok(Self {
             collector: Collector::new()?,
             handles: Vec::new(),
+            #[cfg(test)]
+            fixture: None,
         })
+    }
+    #[cfg(test)]
+    pub(super) fn new_fixture(identity: ProcessIdentity, scope: AppScope) -> Result<Self, String> {
+        Self::main_thread()?;
+        scope.validate()?;
+        let root = std::env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join(".artifacts/p2")
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        let path = std::path::Path::new(&scope.executable_path);
+        let run_name = path
+            .ancestors()
+            .nth(5)
+            .and_then(|root| root.file_name())
+            .and_then(|name| name.to_str())
+            .ok_or("Missing P2 experiment directory identity")?;
+        if scope.bundle_id != format!("local.bree.p2.quit-fixture.t{run_name}")
+            || !path.starts_with(root)
+            || !path.ends_with("BreeQuitFixture.app/Contents/MacOS/BreeQuitFixture")
+            || identity.status != crate::model::Validity::Ok
+            || identity.start_seconds.is_none()
+            || identity.start_microseconds.is_none()
+        {
+            return Err("P2 permits only the self-built fixture with complete identity".into());
+        }
+        let mut backend = Self::new()?;
+        backend.fixture = Some((identity, scope));
+        Ok(backend)
+    }
+    fn control_enabled(&self, identity: &ProcessIdentity, scope: &AppScope) -> bool {
+        #[cfg(test)]
+        if self
+            .fixture
+            .as_ref()
+            .is_some_and(|(id, installation)| id == identity && installation == scope)
+        {
+            return true;
+        }
+        let _ = (identity, scope);
+        enabled()
     }
     fn main_thread() -> Result<(), String> {
         if unsafe { libc::pthread_main_np() } == 0 {
@@ -81,14 +127,34 @@ impl Backend for NativeBackend {
         crate::collect::pump_platform_events();
     }
     fn available(&self) -> bool {
+        #[cfg(test)]
+        if self.fixture.is_some() {
+            return true;
+        }
         enabled()
     }
     fn snapshot(&mut self) -> Result<Snapshot, String> {
-        self.collector.snapshot()
+        let sample = self.collector.snapshot()?;
+        #[cfg(test)]
+        {
+            let mut sample = sample;
+            if let Some((identity, scope)) = &self.fixture {
+                for process in &mut sample.processes {
+                    if process.identity == *identity
+                        && process.executable_path.as_deref() == Some(&scope.executable_path)
+                    {
+                        process.quit_supported = true;
+                    }
+                }
+            }
+            Ok(sample)
+        }
+        #[cfg(not(test))]
+        Ok(sample)
     }
     fn freeze(&mut self, identity: &ProcessIdentity, scope: &AppScope) -> Result<usize, String> {
         Self::main_thread()?;
-        if !enabled() {
+        if !self.control_enabled(identity, scope) {
             return Err(super::capability_reason().into());
         }
         scope.validate()?;
@@ -122,7 +188,7 @@ impl Backend for NativeBackend {
         cancelled: &AtomicBool,
     ) -> Result<bool, String> {
         Self::main_thread()?;
-        if !enabled() {
+        if !self.control_enabled(identity, scope) {
             return Err(super::capability_reason().into());
         }
         crate::collect::pump_platform_events();
