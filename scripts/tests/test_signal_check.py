@@ -38,7 +38,7 @@ class SignalRestorationTests(unittest.TestCase):
                         "    raise SystemExit(130)\n"
                         "signal.signal(signal.SIGINT, stop)\n"
                         "tty.setraw(0)\n"
-                        "os.write(1, b'\\x1b[?1049h\\x1b[?25lClean')\n"
+                        "os.write(1, b'\\x1b[?1049h\\x1b[?25lPreview')\n"
                         "while True: signal.pause()\n"
                     )
                     binary.chmod(0o700)

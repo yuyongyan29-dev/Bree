@@ -80,6 +80,7 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
                   ("Enter Apply", b"qrsa"), ("Search: qrsa", b"\x15bree-private-pty-no-match\r"),
                   ("No matches in this filter.", b"/"), ("Enter Apply", b"\x15draft\x1b"),
                   ("Search: bree-private-pty-no-match", b"\x1b"), ("/ Search names", b"\x1b"),
+                  ("Memory pressure:", b"1\r"), ("Preview · No quit requests", b"\x1b"),
                   ("Memory pressure:", b"p"), ("Preview · No quit requests", b"\x1b"),
                   ("Memory pressure:", b"4\r"), ("History · Recent runs", b"q")]
         if cancel_in_editor:
@@ -110,7 +111,7 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
                         home = screen.lines()
                         home_backgrounds = screen.colored_background_count()
                         home_color_cells = list(screen.color_cells.values())
-                        for label in ("1. Clean", "2. Needs review", "> 3. Memory", "4. History", "S Settings", "Q Quit"):
+                        for label in ("1. Preview", "2. Needs review", "> 3. Memory", "4. History", "S Settings", "Q Quit"):
                             if label not in screen.text():
                                 raise RuntimeError(f"home entry clipped: {label}\n{screen.text()}")
                         if "-.-" in screen.text() or "Rules and preview" in screen.text():

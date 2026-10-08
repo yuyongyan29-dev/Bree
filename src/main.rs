@@ -27,7 +27,7 @@ use std::{
     name = "bree",
     version,
     about = "Understand memory usage on your Mac",
-    long_about = "Inspect local memory usage, application rules and cleanup records. Run bree in an interactive terminal to open the menu. Application quit requests are disabled in this Alpha."
+    long_about = "Inspect local memory usage, application rules, previews and session records. Run bree in an interactive terminal to open the menu. Bree does not quit applications in this version."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -75,7 +75,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Freeze a cleanup plan; skip targets without verified quit capability
+    /// Preview rule classification (--dry-run) or record a session; no application is asked to quit
     Clean {
         #[arg(long)]
         dry_run: bool,
@@ -85,7 +85,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Show completed and incomplete cleanup records without replaying requests
+    /// Show recorded sessions (completed and unfinished) without replaying requests
     History {
         #[arg(long)]
         json: bool,

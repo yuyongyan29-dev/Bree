@@ -25,7 +25,7 @@ from check_env import bree_environment, empty_bree_environment
 # cannot clear. PENDIN is transient line-discipline state, not a raw-mode bit.
 MUTABLE_FLAGS = os.O_APPEND | os.O_ASYNC | os.O_SYNC | os.O_DSYNC | os.O_NONBLOCK
 OUTPUT_LIMIT = 512 * 1024
-HOME_MARKER = b"Clean"
+HOME_MARKER = b"Preview"
 
 
 def modes(fd):

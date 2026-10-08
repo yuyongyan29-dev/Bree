@@ -1011,7 +1011,13 @@ impl App {
                         KeyCode::Down | KeyCode::Char('j') => index = (index + 1).min(3),
                         KeyCode::Char(value @ '1'..='4') => index = (value as u8 - b'1') as usize,
                         KeyCode::Enter => match index {
-                            0 => self.start_automatic_cleanup(),
+                            0 => {
+                                if cleanup::enabled() {
+                                    self.start_automatic_cleanup();
+                                } else {
+                                    self.open_preview();
+                                }
+                            }
                             1 => {
                                 self.set_filter(Filter::Pending);
                                 self.page = Page::Resources;
@@ -1772,8 +1778,12 @@ fn render_history(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     frame.render_widget(Paragraph::new(status).wrap(Wrap { trim: false }), chunks[1]);
     if app.history.is_empty() {
         frame.render_widget(
-            Paragraph::new("No cleanup runs yet. Rule and preview logs are not quit outcomes.")
-                .wrap(Wrap { trim: false }),
+            Paragraph::new(if cleanup::enabled() {
+                "No cleanup runs yet. Rule and preview logs are not quit outcomes."
+            } else {
+                "No session records yet. Rule and preview logs are not quit outcomes."
+            })
+            .wrap(Wrap { trim: false }),
             chunks[2],
         );
     } else {
@@ -2142,7 +2152,7 @@ fn render_home_content(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let automatic = app.plan.as_ref().map_or(0, |plan| plan.automatic_count);
     let entries = [
         if !cleanup::enabled() {
-            "1. Clean         Normal quit disabled".into()
+            "1. Preview       Rules & reasons".into()
         } else if automatic == 0 {
             "1. Clean         No automatic targets".into()
         } else {
@@ -2688,7 +2698,7 @@ fn render_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
         Paragraph::new(if cleanup::enabled() {
             "A Allow  P Protect  E Quit  ↑↓/PgDn Scroll\nR Refresh  S Settings  Esc Back  Q Quit"
         } else {
-            "A Allow  P Protect  E Disabled  ↑↓ Scroll\nR Refresh  S Settings  Esc Back  Q Quit"
+            "A Allow  P Protect  ↑↓/PgDn Scroll\nR Refresh  S Settings  Esc Back  Q Quit"
         })
         .style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)),
         chunks[2],
@@ -2848,15 +2858,17 @@ mod tests {
         let (text, _) = screen(&mut app, 90, 24);
         assert!(text.contains("Analyzing"));
         assert!(text.contains("> 3. Memory"));
+        assert!(text.contains("1. Preview       Rules & reasons"));
         app.handle(key(KeyCode::Char('1')));
         assert!(matches!(
             app.handle(key(KeyCode::Enter)),
             InputResult::Continue
         ));
-        assert_eq!(app.page, Page::Home);
+        assert_eq!(app.page, Page::Preview);
         assert!(app.cleanup.is_none());
-        assert!(app.notice.is_some());
-        app.handle(key(KeyCode::Enter));
+        assert!(app.confirmation.is_none());
+        assert!(app.notice.is_none());
+        app.handle(key(KeyCode::Esc));
         app.handle(key(KeyCode::Char('p')));
         assert_eq!(app.page, Page::Preview);
         let (text, _) = screen(&mut app, 90, 24);
@@ -3107,7 +3119,7 @@ mod tests {
                 "{width}x{height}: {text}"
             );
             for label in [
-                "1. Clean",
+                "1. Preview       Rules & reasons",
                 "2. Needs review",
                 "> 3. Memory",
                 "4. History",
@@ -3200,7 +3212,7 @@ mod tests {
                 assert!(buffer.content.iter().any(|cell| cell.bg != Color::Reset));
                 assert_eq!(app.menu.selected(), Some(2));
                 for label in [
-                    "1. Clean",
+                    "1. Preview",
                     "2. Needs review",
                     "> 3. Memory",
                     "4. History",
@@ -3346,7 +3358,7 @@ mod tests {
             "Unknown",
             "Previous data",
             "Rules unreadable",
-            "1. Clean",
+            "1. Preview",
             "2. Needs review",
             "> 3. Memory",
             "4. History",
@@ -4036,23 +4048,50 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_cleanup_and_zero_candidates_do_not_start_a_session_or_write_records() {
+    fn home_preview_records_only_a_read_only_plan_without_starting_a_session() {
+        let store = TestStore::new();
+        let mut app = store.app();
+        app.received(Ok(scoped_snapshot("Fixture")));
+        assert_eq!(app.plan.as_ref().unwrap().automatic_count, 0);
+        app.handle(key(KeyCode::Char('1')));
+        app.handle(key(KeyCode::Enter));
+        assert!(app.cleanup.is_none());
+        assert!(app.confirmation.is_none());
+        assert_eq!(app.page, Page::Preview);
+        assert!(app.preview_plan.as_ref().unwrap().read_only);
+        assert_eq!(app.preview_plan.as_ref().unwrap().automatic_count, 0);
+        assert_eq!(prepared_record_count(&store.0), 1);
+        let journal = std::fs::read_to_string(store.0.root().join("journal.jsonl")).unwrap();
+        assert_eq!(journal.lines().count(), 1);
+        assert!(history::load(&store.0, 50).unwrap().is_empty());
+    }
+
+    #[test]
+    fn disabled_detail_quit_is_hidden_and_only_shows_a_notice_without_writing_records() {
         let store = TestStore::new();
         let mut app = store.app();
         let sample = scoped_snapshot("Fixture");
         let id = sample.groups[0].id.clone();
         app.received(Ok(sample));
-        assert_eq!(app.plan.as_ref().unwrap().automatic_count, 0);
-        app.handle(key(KeyCode::Char('1')));
-        app.handle(key(KeyCode::Enter));
-        assert!(app.cleanup.is_none());
-        assert_eq!(app.page, Page::Home);
-        assert!(app.notice.as_deref().unwrap().contains("no requests sent"));
-        app.handle(key(KeyCode::Enter));
         app.page = Page::Detail(id);
-        app.handle(key(KeyCode::Char('e')));
-        assert!(app.confirmation.is_none());
-        assert!(app.cleanup.is_none());
+        for (width, height) in [(48, 16), (100, 30)] {
+            let (text, _) = screen(&mut app, width, height);
+            assert!(text.contains("A Allow  P Protect  ↑↓/PgDn Scroll"));
+            assert!(!text.contains("E Quit"));
+            assert!(!text.contains("E Disabled"));
+        }
+        for shortcut in ['e', 'E'] {
+            app.handle(key(KeyCode::Char(shortcut)));
+            assert!(
+                app.notice
+                    .as_deref()
+                    .unwrap()
+                    .contains("Normal quit is disabled")
+            );
+            assert!(app.confirmation.is_none());
+            assert!(app.cleanup.is_none());
+            app.handle(key(KeyCode::Enter)); // Dismiss the notice, without confirming an action.
+        }
         assert!(!store.0.root().exists());
     }
 
@@ -4175,6 +4214,9 @@ mod tests {
         app.handle(key(KeyCode::Enter));
         assert_eq!(app.page, Page::History);
         assert!(app.history.is_empty());
+        let (text, _) = screen(&mut app, 100, 30);
+        assert!(text.contains("No session records yet."));
+        assert!(!text.contains("No cleanup runs yet."));
         assert!(!store.0.root().exists());
         store
             .0

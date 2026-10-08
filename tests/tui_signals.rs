@@ -99,7 +99,7 @@ impl PtyChild {
         // run_internal installs ctrlc before entering raw mode and drawing this
         // frame. Readiness is therefore an upper bound for handler installation;
         // a fixed delay after spawn does not establish that the handler exists.
-        self.drain_until(b"Clean");
+        self.drain_until(b"Preview");
     }
 
     fn drain_until(&mut self, marker: &[u8]) {
