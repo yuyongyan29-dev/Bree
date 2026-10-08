@@ -119,7 +119,7 @@ JSON 的 `schema_version` 为 2。数值内部使用字节，文本显示 MiB／
 
 schema 2 移除了 `list`／`watch`／`inspect` 的 `policy`、所有相关输出的 `policy_error`、`policy_state_valid`，以及 `status` 的 `policy_summary` 和进程对象的 `protection_reasons`、`quit_supported`。`doctor` 不再输出 `rule_storage` 或 `capability_gate_reason`；其 `capabilities` 移除了 `rules_enabled`、`dry_run_enabled`、`cleanup_enabled`、`a1_enabled`、`a2_enabled`、`cleanup_session_enabled`、`history_enabled`，现在只含 `read_only`、`ai_attribution_enabled` 和 `background_service`。
 
-schema 2 在本次未发行的调整中移除所有 `Metric.source`，保留 `value/status/reason`，来源统一见上表；分组新增 `short_id`，`id` 与 `process_ids` 的完整 ID 含义不变。`sampled_at_unix_ms` 仍为 Unix 毫秒时间戳。
+schema 2 还移除了所有 `Metric.source`，保留 `value/status/reason`，来源统一见上表；分组新增 `short_id`，`id` 与 `process_ids` 的完整 ID 含义不变。`sampled_at_unix_ms` 仍为 Unix 毫秒时间戳。
 
 stdout 只输出命令结果，诊断写 stderr。默认 `list`／`watch` JSON 省略路径；`inspect` JSON 将用户主目录替换为 `~`，仍可能包含项目名，分享前请检查。
 
