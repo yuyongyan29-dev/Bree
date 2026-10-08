@@ -47,6 +47,119 @@ fn bree(args: &[&str]) -> Output {
     TestHome::new().run(args)
 }
 
+fn assert_keys(value: &Value, expected: &[&str]) {
+    use std::collections::BTreeSet;
+    let actual: BTreeSet<_> = value
+        .as_object()
+        .expect("JSON object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(actual, expected.iter().copied().collect());
+}
+
+fn assert_metric(metric: &Value) {
+    assert_keys(metric, &["value", "status", "reason"]);
+    let status = metric["status"].as_str().expect("metric status");
+    assert!(["ok", "denied", "unsupported", "exited", "stale", "unknown"].contains(&status));
+    if status == "ok" {
+        assert!(!metric["value"].is_null());
+        assert!(metric["reason"].is_null());
+    } else {
+        assert!(metric["value"].is_null());
+        assert!(
+            !metric["reason"]
+                .as_str()
+                .expect("unavailable reason")
+                .is_empty()
+        );
+    }
+}
+
+// Keep these exact sets in sync with both user guides' Output contract tables.
+// Additions fail too, so extending schema 2 requires an explicit contract review.
+fn assert_json_contract(value: &Value, command: &str) {
+    let keys: &[&str] = match command {
+        "status" => &[
+            "schema_version",
+            "sampled_at_unix_ms",
+            "collected_in_ms",
+            "system",
+            "coverage",
+            "diagnostics",
+        ],
+        "list" => &[
+            "schema_version",
+            "sampled_at_unix_ms",
+            "collected_in_ms",
+            "system",
+            "processes",
+            "groups",
+            "coverage",
+            "diagnostics",
+            "view",
+        ],
+        "inspect" => &["schema_version", "sampled_at_unix_ms", "group", "processes"],
+        "watch" => &[
+            "schema_version",
+            "sampled_at_unix_ms",
+            "collected_in_ms",
+            "system",
+            "processes",
+            "groups",
+            "coverage",
+            "diagnostics",
+        ],
+        "doctor" => &[
+            "schema_version",
+            "version",
+            "platform",
+            "architecture",
+            "sampled_at_unix_ms",
+            "coverage",
+            "diagnostics",
+            "capabilities",
+            "notes",
+        ],
+        "license" => &["schema_version", "license", "third_party", "text"],
+        "error" => &["schema_version", "error"],
+        _ => panic!("missing JSON contract for {command}"),
+    };
+    assert_keys(value, keys);
+    assert_eq!(value["schema_version"], 2);
+    if command == "error" {
+        assert_keys(&value["error"], &["code", "message"]);
+        assert_eq!(value["error"]["code"], "runtime_error");
+        assert!(!value["error"]["message"].as_str().unwrap().is_empty());
+    }
+    if let Some(system) = value.get("system") {
+        for field in [
+            "total_bytes",
+            "used_bytes",
+            "compressed_bytes",
+            "swap_used_bytes",
+            "cached_bytes",
+            "pressure",
+        ] {
+            assert_metric(&system[field]);
+        }
+    }
+    if let Some(processes) = value.get("processes") {
+        for process in processes.as_array().unwrap() {
+            assert_metric(&process["memory_bytes"]);
+            assert_metric(&process["cpu_one_core_percent"]);
+        }
+    }
+    if let Some(groups) = value.get("groups") {
+        for group in groups.as_array().unwrap() {
+            assert_metric(&group["memory_bytes"]);
+        }
+    }
+    if let Some(group) = value.get("group").filter(|group| !group.is_null()) {
+        assert_metric(&group["memory_bytes"]);
+    }
+}
+
 #[test]
 fn naked_command_without_tty_never_waits_for_input() {
     let output = bree(&[]);
@@ -206,6 +319,7 @@ fn installed_program_carries_project_and_dependency_notices_offline() {
         assert!(result.status.success());
         assert!(result.stderr.is_empty());
         let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_json_contract(&value, "license");
         assert_eq!(value["license"], "GPL-3.0-only");
         assert_eq!(value["third_party"], third_party);
         let text = value["text"].as_str().unwrap();
@@ -308,6 +422,9 @@ fn watch_outputs_jsonl_and_builds_a_cpu_baseline() {
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
     assert_eq!(rows.len(), 2);
+    for row in &rows {
+        assert_json_contract(row, "watch");
+    }
     assert!(rows[1]["sampled_at_unix_ms"].as_u64() > rows[0]["sampled_at_unix_ms"].as_u64());
     assert!(
         rows[1]["processes"]
@@ -345,6 +462,7 @@ fn stale_inspect_fails_as_structured_error() {
         let output = home.run(&["inspect", id, "--json"]);
         assert_eq!(output.status.code(), Some(1));
         let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_json_contract(&error, "error");
         assert_eq!(error["schema_version"], 2);
         assert_eq!(error["error"]["code"], "runtime_error");
         assert!(
@@ -410,6 +528,7 @@ fn missing_pid_and_short_id_return_structured_runtime_errors() {
         let output = bree(&["inspect", id, "--json"]);
         assert_eq!(output.status.code(), Some(1));
         let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_json_contract(&error, "error");
         assert_eq!(error["schema_version"], 2);
         assert_eq!(error["error"]["code"], "runtime_error");
         assert!(!output.stderr.is_empty());
@@ -572,26 +691,7 @@ fn all_commands_leave_an_empty_home_unchanged() {
     assert!(sample.status.success());
     let sample: Value = serde_json::from_slice(&sample.stdout).unwrap();
     assert_eq!(sample["schema_version"], 2);
-    let keys: Vec<_> = sample
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
-    assert_eq!(
-        keys,
-        [
-            "collected_in_ms",
-            "coverage",
-            "diagnostics",
-            "groups",
-            "processes",
-            "sampled_at_unix_ms",
-            "schema_version",
-            "system",
-            "view"
-        ]
-    );
+    assert_json_contract(&sample, "list");
     let processes = sample["processes"].as_array().unwrap();
     let own = processes
         .iter()
@@ -661,6 +761,15 @@ fn all_commands_leave_an_empty_home_unchanged() {
             "{args:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        if args.contains(&"--json") {
+            assert!(output.stderr.is_empty());
+            // JSONL needs one complete contract per line, not one for the stream.
+            for line in String::from_utf8_lossy(&output.stdout).lines() {
+                let value: Value = serde_json::from_str(line).unwrap();
+                assert_json_contract(&value, args[0]);
+            }
+            assert!(!output.stdout.is_empty());
+        }
         if args == ["doctor", "--json"] {
             let doctor: Value = serde_json::from_slice(&output.stdout).unwrap();
             assert_eq!(
