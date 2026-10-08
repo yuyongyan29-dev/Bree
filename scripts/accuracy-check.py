@@ -84,11 +84,19 @@ def parse_ps(text):
     return values
 
 
-def compare_metric(metric, reference, tolerance, reason=None):
+def compare_metric(metric, reference, tolerance, reason=None, bracket=None):
+    """Compare one Bree metric with a reference.
+
+    bracket is the (low, high) range of the same reference read just before and
+    after the round. Memory can change by hundreds of MiB between two reads that
+    are ~100 ms apart, so a value inside the bracket has zero distance.
+    """
     result = {'bree_bytes': metric.get('value'), 'bree_status': metric.get('status'),
               'bree_reason': metric.get('reason'), 'reference_bytes': reference,
+              'reference_bracket_bytes': list(bracket) if bracket else None,
               'tolerance_bytes': tolerance, 'difference_bytes': None,
-              'absolute_difference_bytes': None, 'within_tolerance': None}
+              'absolute_difference_bytes': None, 'bracket_distance_bytes': None,
+              'within_tolerance': None}
     if reference is None or metric.get('status') != 'ok' or metric.get('value') is None:
         result.update(status='unavailable', reason=reason or metric.get('reason') or 'Missing metric')
         return result
@@ -96,24 +104,43 @@ def compare_metric(metric, reference, tolerance, reason=None):
     if type(value) is not int or value < 0:
         raise ValueError('Invalid Bree memory value')
     delta = value - reference
-    result.update(status='compared', difference_bytes=delta,
-                  absolute_difference_bytes=abs(delta), within_tolerance=abs(delta) <= tolerance)
+    low, high = bracket if bracket else (reference, reference)
+    distance = max(0, low - value, value - high)
+    result.update(status='compared', difference_bytes=delta, absolute_difference_bytes=abs(delta),
+                  bracket_distance_bytes=distance, within_tolerance=distance <= tolerance)
     return result
 
 
-def system_comparison(system, vm_text, total_text, swap_text, pagesize_text):
+def used_and_compressed(counters, page_size):
+    missing = sorted(set(VM_FIELDS.values()) - counters.keys())
+    used = None if missing else (
+        max(0, counters['internal_page_count'] - counters['purgeable_count'])
+        + counters['wire_count'] + counters['compressor_page_count']) * page_size
+    compressed = counters.get('compressor_page_count')
+    return missing, used, None if compressed is None else compressed * page_size
+
+
+def system_comparison(system, vm_text, total_text, swap_text, pagesize_text, vm_bracket_texts=()):
     page_size, counters = parse_vm_stat(vm_text)
     if page_size != int(pagesize_text.strip()):
         raise ValueError('vm_stat and sysctl page sizes disagree')
     total = int(total_text.strip())
     if total <= 0:
         raise ValueError('Physical memory is invalid')
-    missing = sorted(set(VM_FIELDS.values()) - counters.keys())
-    used = None if missing else (
-        max(0, counters['internal_page_count'] - counters['purgeable_count'])
-        + counters['wire_count'] + counters['compressor_page_count']) * page_size
-    compressed = counters.get('compressor_page_count')
-    compressed = None if compressed is None else compressed * page_size
+    missing, used, compressed = used_and_compressed(counters, page_size)
+    brackets = {}
+    readings = {'used_bytes': [used], 'compressed_bytes': [compressed]}
+    for text in vm_bracket_texts:
+        extra_page_size, extra = parse_vm_stat(text)
+        if extra_page_size != page_size:
+            raise ValueError('vm_stat page sizes disagree within a round')
+        _, extra_used, extra_compressed = used_and_compressed(extra, page_size)
+        readings['used_bytes'].append(extra_used)
+        readings['compressed_bytes'].append(extra_compressed)
+    if vm_bracket_texts:
+        for key, values in readings.items():
+            if None not in values:
+                brackets[key] = (min(values), max(values))
     swap = parse_swap(swap_text)
     references = dict(used_bytes=used, total_bytes=total,
                       compressed_bytes=compressed, swap_used_bytes=swap['bytes'])
@@ -123,7 +150,8 @@ def system_comparison(system, vm_text, total_text, swap_text, pagesize_text):
         # physical memory must match exactly. Swap's printed rounding is retained.
         tolerance = 0 if key == 'total_bytes' else max(64 * MIB, (reference or 0) / 100)
         reason = 'Missing vm_stat counters: ' + ', '.join(missing) if reference is None else None
-        comparisons[key] = compare_metric(system.get(key, {}), reference, tolerance, reason)
+        comparisons[key] = compare_metric(system.get(key, {}), reference, tolerance, reason,
+                                          brackets.get(key))
     return {'page_size': page_size, 'vm_counters': counters, 'missing_counters': missing,
             'swap_rounding_half_step_bytes': swap['rounding_half_step_bytes'],
             'comparisons': comparisons}
@@ -214,9 +242,11 @@ def analyze(commands):
         listing = json.loads(commands['list']['stdout'])
         if status['schema_version'] != 2 or listing['schema_version'] != 2:
             raise ValueError('Expected Bree schema 2')
+        bracket_texts = [commands[name]['stdout'] for name in ('vm_stat_before', 'vm_stat_after')
+                         if name in commands]
         system = system_comparison(status['system'], commands['vm_stat']['stdout'],
                                    commands['total']['stdout'], commands['swap']['stdout'],
-                                   commands['pagesize']['stdout'])
+                                   commands['pagesize']['stdout'], bracket_texts)
         rss = rss_comparison(listing['processes'], parse_ps(commands['ps']['stdout']), system['page_size'])
         result.update(status='compared', system=system, rss=rss)
     except (ValueError, KeyError, TypeError) as error:
@@ -303,7 +333,7 @@ def main():
                     'macos': platform.mac_ver()[0], 'architecture': platform.machine(),
                     'version': capture([str(binary), '--version'], env, lock_fd),
                     'lock': str(args.lock), 'vm_field_mapping': VM_FIELDS,
-                    'tolerance_policy': 'Used: max(1% of vm_stat reference, 64 MiB); total: exact; compressed/swap: same exploratory budget as used; RSS: one page',
+                    'tolerance_policy': 'Used: max(1% of vm_stat reference, 64 MiB), measured as distance from the range of vm_stat reads before, during and after the round; total: exact; compressed: same, with the same range; swap: same budget against the concurrent read; RSS: one page',
                     'samples_requested': args.samples, 'interval_seconds': args.interval}
         (output / 'identity.json').write_text(json.dumps(identity, indent=2) + '\n')
         commands = {'status': [str(binary), 'status', '--json'], 'list': [str(binary), 'list', '--json'],
@@ -319,8 +349,13 @@ def main():
                 # Start at xx:xx:xx.05, leaving room for initialization + reads.
                 time.sleep((1.05 - time.time() % 1) % 1)
                 round_start = time.monotonic()
+                # Bracket the concurrent round with vm_stat reads, because memory
+                # can move by hundreds of MiB between reads ~100 ms apart.
+                before = capture(commands['vm_stat'], env, lock_fd)
                 futures = {name: pool.submit(capture, command, env, lock_fd) for name, command in commands.items()}
                 raw = {name: future.result() for name, future in futures.items()}
+                raw['vm_stat_before'] = before
+                raw['vm_stat_after'] = capture(commands['vm_stat'], env, lock_fd)
                 (output / f'sample-{index + 1:02}-raw.json').write_text(json.dumps(raw, indent=2) + '\n')
                 sample = analyze(raw)
                 samples.append(sample)

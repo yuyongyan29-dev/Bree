@@ -111,6 +111,32 @@ class ComparisonTests(unittest.TestCase):
         for missing in [metric(None, 'denied', 'denied'), metric(0, 'stale'), metric(None)]:
             self.assertIsNone(ACCURACY.compare_metric(missing, 0, 1)['within_tolerance'])
 
+    def test_bracket_accepts_values_between_reads_and_measures_distance_outside(self):
+        tolerance = 64 * 1024**2
+        low, high = 10 * 1024**3, 10 * 1024**3 + 400 * 1024**2
+        inside = ACCURACY.compare_metric(metric(low + 200 * 1024**2), low, tolerance, bracket=(low, high))
+        self.assertTrue(inside['within_tolerance'])
+        self.assertEqual(inside['bracket_distance_bytes'], 0)
+        self.assertEqual(inside['difference_bytes'], 200 * 1024**2)
+        outside = ACCURACY.compare_metric(metric(high + tolerance + 1), low, tolerance, bracket=(low, high))
+        self.assertFalse(outside['within_tolerance'])
+        self.assertEqual(outside['bracket_distance_bytes'], tolerance + 1)
+
+    def test_used_memory_change_between_reads_stays_within_the_bracket(self):
+        # 400 MiB of anonymous pages appear between the concurrent and the after read.
+        after = VM.replace('Anonymous pages: 1000.', 'Anonymous pages: 26600.')
+        source = system()
+        source['used_bytes'] = metric(27050 * 16384)
+        alone = ACCURACY.system_comparison(source, VM, str(16 * 1024**3), SWAP, '16384')
+        self.assertFalse(alone['comparisons']['used_bytes']['within_tolerance'])
+        bracketed = ACCURACY.system_comparison(source, VM, str(16 * 1024**3), SWAP, '16384', [VM, after])
+        used = bracketed['comparisons']['used_bytes']
+        self.assertTrue(used['within_tolerance'])
+        self.assertEqual(used['reference_bracket_bytes'], [1450 * 16384, 27050 * 16384])
+        with self.assertRaises(ValueError):
+            ACCURACY.system_comparison(source, VM, str(16 * 1024**3), SWAP, '16384',
+                                       [after.replace('16384 bytes', '4096 bytes')])
+
     def test_rss_buckets_are_disjoint_exclude_non_ok_and_preserve_reasons(self):
         rows = [process(1, 1024), process(2, 1024+16384), process(3, 1024+16385),
                 process(4, None, 'denied'), process(5, 0, 'stale'), process(6, None), process(7, 0), process(8, 0)]
