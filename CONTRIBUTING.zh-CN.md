@@ -52,11 +52,12 @@ cargo test --locked
 改动安装器或发行工具时再运行：
 
 ```sh
-sh -n distribution/install.sh distribution/package.sh
+sh -n distribution/install.sh distribution/package.sh distribution/notarize.sh
 python3 distribution/tests/test_install.py
+python3 distribution/tests/test_release.py
 ```
 
-提交时请记录实际运行的检查与结果。安装器测试使用模拟下载，不访问远端，也不改写用户配置。
+提交时请记录实际运行的检查与结果。安装器和发行工具测试使用模拟下载、构建、签名工具与公证响应，不访问远端、真实钥匙串或用户配置。模拟的 Accepted 响应不构成公证证据。
 
 运行需要写入状态的手动验证时，可以指定隔离数据目录：
 
@@ -77,6 +78,41 @@ python3 scripts/stability-check.py \
 脚本的独立回归检查为 `python3 -m unittest discover -s scripts/tests`，CI 也运行此命令；测试使用模拟子进程和临时目录，不依赖预构建的 `target/release/bree`、开发者终端配置或真实用户数据。PTY 检查不能替代真实终端的明暗主题、字体、小窗口与缩放视觉检查；统一入口将这项标为 not-run，另行记录实际检查。单机数据只证明当前构建在该系统上的观察结果，不能扩大发行支持范围或用于证明 A1 退出能力。
 
 构建与本地实验产物保存在已忽略的 `target/` 或 `.artifacts/` 中，请勿提交个人路径或原始进程快照。
+
+## 签名发行准备
+
+已发布的 Alpha 仍为 ad-hoc 签名、未公证。以下维护者工具用于准备后续发行；加入工具不会改变已发布资产或安装承诺。A1 应用退出能力继续关闭。
+
+存在并行工作区时，在构建、打包命令或实测**开始前**，使用 `fcntl.flock` 取得与稳定性入口相同绝对路径的排他锁，并持有至子进程退出。打包脚本不会自动取得这把共享锁；它的输出目录锁只防止两个写入者同时向同一目录打包。
+
+`distribution/package.sh` 构建锁定依赖的 release，检查 arm64 可执行文件、版本与系统库依赖，然后准备本地资产。未指定签名选项时，保留 linker 的 ad-hoc 签名和原有输出文件集合。使用证书 SHA-1 或钥匙串中的完整身份名称签名暂存副本：
+
+```sh
+sh distribution/package.sh \
+  --sign-identity 'CERTIFICATE_SHA1_OR_FULL_NAME' \
+  --output "$PWD/.artifacts/distribution/signed-candidate"
+```
+
+脚本要求 hardened runtime 与在线安全时间戳，严格验证签名，输出 Authority 链、TeamIdentifier 与 runtime 标志，并在签名后重新检查可执行文件。签名或时间戳失败即停止，不回退到未签名资产。二进制 SHA-256 与生成的 Formula 对应最终签名后的字节，`bree-version.txt` 对应已核对的版本；已有输出文件不会被替换。
+
+公开发行需要 **Developer ID Application** 证书及本机钥匙串中的私钥。Apple Development 证书可用于验证本机签名流程，但产物不得发布。脚本根据实际签名的 Authority 分类，不根据传入的身份字符串猜测。若 macOS 询问是否允许 `codesign` 访问私钥，需要用户响应；不要修改钥匙串访问设置或导出私钥来绕过弹窗。
+
+公证前，使用 `xcrun notarytool store-credentials 'bree-notary'` 交互式建立 profile，只在安全提示中输入凭据。密码与 API 私钥内容不得放在命令参数、环境变量、仓库文件或日志中。Developer ID 候选产物与 profile 就绪后，可单独执行以下**上传至 Apple** 的操作：
+
+```sh
+sh distribution/notarize.sh \
+  --binary "$PWD/.artifacts/distribution/signed-candidate/bree-aarch64-apple-darwin" \
+  --keychain-profile 'bree-notary' \
+  --output "$PWD/.artifacts/distribution/notary-candidate"
+```
+
+输出目录必须是新目录。脚本冻结副本，拒绝非 Developer ID 签名、缺少 hardened runtime 或安全时间戳的文件，使用 `ditto -c -k --keepParent` 创建 zip，再运行 `notarytool submit --wait`。私有证据目录保留二进制摘要、签名、submission ID／状态、命令退出码和公证日志。任何错误或非 Accepted 状态都算失败；Accepted 也必须取得日志并检查警告。30 分钟等待超时不会取消 Apple 的后台处理，重试前先检查已保存的提交。不要提交这些本地产物。
+
+分别核验**签名、公证提交、Accepted 状态与 Gatekeeper 放行**。独立二进制和 zip 不能 staple；Accepted 不证明干净离线环境可以启动。针对实际 curl 下载与 Homebrew bottle，检查 `codesign -dvvv`、`codesign --verify --strict`、`spctl -a -t exec -vv` 和 `xattr -l`，再在干净标准账号测试全新安装、升级、失败保留旧程序和卸载。记录在线／离线行为，不移除 quarantine 或绕过系统校验。参考 Apple 的[公证要求](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)与[自定义流程](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)。
+
+在可丢弃的 Homebrew 环境执行 `brew install --build-bottle <tap>/bree` 与 `brew bottle <tap>/bree`。比较签名候选、安装后的二进制与 bottle 解包后二进制的 SHA-256 和签名信息；测试安装 bottle 后再次比较。Homebrew 可能修改需要重定位的二进制并重新签名，因此打包成功不等于保留原签名。字节或 Authority 变化时停止。不要用用户已有的全局安装做这个实验。参考 [Homebrew bottle 文档](https://docs.brew.sh/Bottles)。
+
+本地打包、公证提交、发布 GitHub Release、更新 tap 和修改 `distribution/latest-version.txt` 是独立动作。包版本来自 `Cargo.toml`，默认 curl 版本由 `distribution/latest-version.txt` 单独选择。准备匹配的源码与许可资产，核验最终分发形式后，再按授权范围发布。
 
 ## 行为约定
 

@@ -52,11 +52,12 @@ cargo test --locked
 For installer or distribution tooling changes, also run:
 
 ```sh
-sh -n distribution/install.sh distribution/package.sh
+sh -n distribution/install.sh distribution/package.sh distribution/notarize.sh
 python3 distribution/tests/test_install.py
+python3 distribution/tests/test_release.py
 ```
 
-Record the checks you actually ran and their results. Installer tests use simulated downloads; they do not access remote servers or modify user configuration.
+Record the checks you actually ran and their results. Installer and release tooling tests use simulated downloads, builds, signing tools, and notarization responses; they do not access remote servers, real keychains, or user configuration. A mock Accepted response is not evidence of notarization.
 
 Use an isolated data directory for manual checks that write state:
 
@@ -77,6 +78,41 @@ The runner rebuilds the release binary and runs the existing benchmark, terminal
 Run script regression tests with `python3 -m unittest discover -s scripts/tests`; CI runs the same command. These tests use simulated child processes and temporary directories, without a prebuilt `target/release/bree`, developer terminal settings, or real user data. PTY checks do not replace visual checks in a real terminal for light and dark themes, fonts, small windows, or resizing. The runner marks that check as `not-run`; record actual visual checks separately. Measurements from one machine describe only that build on that system. They do not extend release compatibility claims or establish A1 application quitting capability.
 
 Keep builds and local experiment output in the ignored `target/` or `.artifacts/` directories. Do not commit personal paths or raw process snapshots.
+
+## Preparing a signed release
+
+The published Alpha remains ad-hoc signed and unnotarized. The following maintainer tools prepare future releases; adding them does not change the published assets or installation guarantees. A1 application quitting remains disabled.
+
+With concurrent worktrees, take the same absolute `fcntl.flock` exclusive lock used by the stability runner **before** any build, packaging command, or live measurement, and hold it until its child processes exit. Packaging does not acquire that shared lock itself; its output-directory lock only prevents two writers from packaging into the same directory.
+
+`distribution/package.sh` builds the locked release, checks the arm64 executable, version, and system-library dependencies, then prepares local assets. Without a signing option it preserves the linker's ad-hoc signature and existing output set. To sign the staged copy using a certificate SHA-1 or full keychain identity name:
+
+```sh
+sh distribution/package.sh \
+  --sign-identity 'CERTIFICATE_SHA1_OR_FULL_NAME' \
+  --output "$PWD/.artifacts/distribution/signed-candidate"
+```
+
+The script requires hardened runtime and an online secure timestamp, verifies the signature strictly, prints the Authority chain, TeamIdentifier, and runtime flags, and repeats the executable checks after signing. Signing or timestamp failure stops preparation without an unsigned fallback. Binary SHA-256 and the generated Formula refer to the final signed bytes; `bree-version.txt` matches their checked version. Existing output files are never replaced.
+
+Public distribution needs a **Developer ID Application** certificate with its private key in the local keychain. An Apple Development certificate can validate the local signing flow, but its output must not be published. The script classifies the certificate using the signature's Authority, not the supplied identity string. If macOS asks to allow `codesign` access to the private key, the user must respond; do not change keychain access settings or export keys to bypass the prompt.
+
+For notarization, provision a profile interactively with `xcrun notarytool store-credentials 'bree-notary'`. Enter credentials only at its secure prompts. Do not put passwords or API private-key contents in command arguments, environment variables, repository files, or logs. Once the Developer ID candidate and profile are ready, this **separate upload to Apple** is available:
+
+```sh
+sh distribution/notarize.sh \
+  --binary "$PWD/.artifacts/distribution/signed-candidate/bree-aarch64-apple-darwin" \
+  --keychain-profile 'bree-notary' \
+  --output "$PWD/.artifacts/distribution/notary-candidate"
+```
+
+The output directory must be new. The script freezes a copy, rejects non-Developer ID signatures, missing hardened runtime, or missing secure timestamps, creates a zip with `ditto -c -k --keepParent`, and runs `notarytool submit --wait`. It retains the binary digest, signature, submission ID/status, command exit codes, and notary log in a private evidence directory. Any error or status other than Accepted fails; even Accepted submissions require log retrieval and warning review. A 30-minute timeout does not cancel processing at Apple: inspect the saved submission before retrying. Never commit these local artifacts.
+
+Verify **signing**, **submission**, **Accepted status**, and **Gatekeeper acceptance** separately. Standalone binaries and zip archives cannot be stapled; an Accepted response does not establish clean offline launch. Check the actual curl download and Homebrew bottle with `codesign -dvvv`, `codesign --verify --strict`, `spctl -a -t exec -vv`, and `xattr -l`, then test fresh installation, upgrade, failure preservation, and uninstall under a clean standard account. Record online/offline behavior without removing quarantine or bypassing system checks. See Apple's [notarization requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) and [custom workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
+
+On a disposable Homebrew installation, use `brew install --build-bottle <tap>/bree` and `brew bottle <tap>/bree`. Compare SHA-256 and signature details of the signed candidate, installed binary, and extracted bottle binary; after a test pour compare the installed binary again. Homebrew can modify and re-sign relocated binaries, so do not infer signature preservation from successful bottling. Stop if bytes or Authority change. Do not use a user's existing global installation for this experiment. See [Homebrew bottles](https://docs.brew.sh/Bottles).
+
+Packaging, notarization submission, publishing a GitHub Release, updating the tap, and changing `distribution/latest-version.txt` are separate actions. The package version comes from `Cargo.toml`; the default curl version is chosen separately by `distribution/latest-version.txt`. Prepare matching source and license assets and verify the final distribution before an authorized publication.
 
 ## Behavior contracts
 

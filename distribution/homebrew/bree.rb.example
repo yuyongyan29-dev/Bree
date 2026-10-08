@@ -1,6 +1,9 @@
 # Example only; no download endpoint is published by this file.
 # distribution/package.sh generates bree.rb with the current version and digest.
 # Add the brew bottle output before publishing Formula/bree.rb in the tap.
+# For signed assets, compare SHA-256 and codesign details before/after bottling
+# and pouring. Relocation can change signatures; see CONTRIBUTING.md.
+# Never publish Apple Development test artifacts as release assets.
 # Install with: brew install OWNER/TAP/bree
 class Bree < Formula
   desc "Local memory inspection for macOS"
