@@ -161,10 +161,24 @@ class SoakTests(unittest.TestCase):
             binary = folder / "fake-bree"
             binary.write_text(FAKE.replace("INTERPRETER", sys.executable))
             binary.chmod(0o700)
+            # Long durations keep every scenario running until the injected error,
+            # which ends the run as soon as all three fakes have drawn.
             args = argparse.Namespace(binary=binary, output=folder / "soak.json",
-                                      home_seconds=.3, resources_seconds=.4,
-                                      watch_seconds=.4, sample_interval=.08)
-            with patch.object(SOAK.Screen, "feed", side_effect=RuntimeError("screen error")):
+                                      home_seconds=10, resources_seconds=10,
+                                      watch_seconds=10, sample_interval=.08)
+            # Fail only after every fake has drawn. A child still in canonical
+            # mode would discard the "q" when it enters raw mode (TCSAFLUSH),
+            # so failing earlier makes the expected Q-only reaping racy.
+            feed = SOAK.Screen.feed
+            drawn = set()
+
+            def fail_after_all_drawn(screen, data):
+                drawn.add(id(screen))
+                if len(drawn) == 3:
+                    raise RuntimeError("screen error")
+                return feed(screen, data)
+
+            with patch.object(SOAK.Screen, "feed", autospec=True, side_effect=fail_after_all_drawn):
                 report = SOAK.run(args)
             self.assertEqual(report["status"], "failed")
             self.assertEqual(report["error"], "screen error")
