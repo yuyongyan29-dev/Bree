@@ -211,7 +211,7 @@ class Bree < Formula
 
   test do
     assert_equal "bree #{version}", shell_output("#{bin}/bree --version").strip
-    assert_match '"schema_version":1', shell_output("#{bin}/bree license --json")
+    assert_match '"schema_version":2', shell_output("#{bin}/bree license --json")
   end
 end
 FORMULA
