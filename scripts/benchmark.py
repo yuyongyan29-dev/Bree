@@ -3,13 +3,14 @@
 import argparse
 import hashlib
 import json
-import os
 import platform
 import re
 import statistics
 import subprocess
 import time
 from pathlib import Path
+
+from check_env import empty_bree_environment
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--binary", type=Path, default=Path("target/release/bree"))
@@ -23,21 +24,23 @@ elapsed = []
 sampling = []
 first = None
 observations = []
-for _ in range(args.runs):
-    start = time.perf_counter()
-    result = subprocess.run([str(binary), "status", "--json"], capture_output=True, check=True)
-    elapsed.append((time.perf_counter() - start) * 1000)
-    row = json.loads(result.stdout)
-    first = first or row
-    sampling.append(row["collected_in_ms"])
-    observations.append({"command": [str(binary), "status", "--json"],
-                         "exit_code": result.returncode,
-                         "elapsed_ms": elapsed[-1],
-                         "collected_in_ms": row["collected_in_ms"],
-                         "processes": row["coverage"]["enumerated_processes"]})
-timed = subprocess.run(["/usr/bin/time", "-l", str(binary), "watch", "--json", "--count", "5", "--interval", "2"], capture_output=True, check=True)
+with empty_bree_environment(args.output) as env:
+    for _ in range(args.runs):
+        start = time.perf_counter()
+        result = subprocess.run([str(binary), "status", "--json"], capture_output=True, check=True, env=env)
+        elapsed.append((time.perf_counter() - start) * 1000)
+        row = json.loads(result.stdout)
+        first = first or row
+        sampling.append(row["collected_in_ms"])
+        observations.append({"command": [str(binary), "status", "--json"],
+                             "exit_code": result.returncode,
+                             "elapsed_ms": elapsed[-1],
+                             "collected_in_ms": row["collected_in_ms"],
+                             "processes": row["coverage"]["enumerated_processes"]})
+    timed = subprocess.run(["/usr/bin/time", "-l", str(binary), "watch", "--json", "--count", "5", "--interval", "2"], capture_output=True, check=True, env=env)
 match = re.search(rb"(\d+)\s+maximum resident set size", timed.stderr)
 report = {
+    "data_dir": env["BREE_DATA_DIR"],
     "system": platform.platform(), "architecture": platform.machine(),
     "binary": str(binary), "binary_bytes": binary.stat().st_size,
     "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),

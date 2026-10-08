@@ -18,6 +18,8 @@ import termios
 import time
 from pathlib import Path
 
+from check_env import bree_environment, empty_bree_environment
+
 
 # Darwin FCNTLFLAGS: exclude kernel write-history FWASWRITTEN, which F_SETFL
 # cannot clear. PENDIN is transient line-discipline state, not a raw-mode bit.
@@ -100,8 +102,7 @@ def run_case(binary, case, requested_signal, close_master, args, iteration):
         before = terminal_state(slave)
         mark("before_spawn", terminal=before)
         child = subprocess.Popen([str(binary)], stdin=slave, stdout=slave, stderr=slave,
-                                 env=dict(os.environ, TERM="xterm-256color",
-                                          BREE_DATA_DIR=str(args.data_dir)))
+                                 env=bree_environment(args.data_dir))
         mark("spawn_returned", pid=child.pid)
         if args.send_after_ms is None:
             deadline = time.monotonic() + args.startup_timeout
@@ -228,7 +229,7 @@ def main():
     parser.add_argument("--binary", type=Path, default=Path("target/release/bree"))
     parser.add_argument("--output", type=Path, default=Path(".artifacts/signal-check.json"))
     parser.add_argument("--data-dir", type=Path,
-                        help="isolated BREE_DATA_DIR; default is signal-data beside the report")
+                        help="explicit isolated BREE_DATA_DIR; default is a fresh private store beside the report")
     parser.add_argument("--repeat", type=positive_int, default=1)
     parser.add_argument("--startup-timeout", type=positive_int, default=5)
     parser.add_argument("--exit-timeout", type=positive_int, default=5)
@@ -237,17 +238,19 @@ def main():
     args = parser.parse_args()
     if args.send_after_ms is not None and not 0 <= args.send_after_ms <= 10000:
         parser.error("--send-after-ms must be between 0 and 10000")
-    args.data_dir = (args.data_dir or args.output.parent / "signal-data").resolve()
     binary = args.binary.resolve()
-    results = [
-        run_case(binary, case, requested_signal, close_master, args, iteration)
-        for iteration in range(args.repeat)
-        for case, requested_signal, close_master in [
-            ("sigint", signal.SIGINT, False), ("sigterm", signal.SIGTERM, False),
-            ("sighup", signal.SIGHUP, False), ("sighup_after_eof", signal.SIGHUP, True),
-            ("eof_during_initialization", signal.SIGHUP, True),
+    with empty_bree_environment(args.output) as env:
+        args.data_dir = (args.data_dir.resolve() if args.data_dir is not None else
+                         Path(env["BREE_DATA_DIR"]))
+        results = [
+            run_case(binary, case, requested_signal, close_master, args, iteration)
+            for iteration in range(args.repeat)
+            for case, requested_signal, close_master in [
+                ("sigint", signal.SIGINT, False), ("sigterm", signal.SIGTERM, False),
+                ("sighup", signal.SIGHUP, False), ("sighup_after_eof", signal.SIGHUP, True),
+                ("eof_during_initialization", signal.SIGHUP, True),
+            ]
         ]
-    ]
     report = {
         "status": "passed" if all(case["status"] == "passed" for case in results) else "failed",
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),

@@ -7,7 +7,9 @@ import signal
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 SPEC = importlib.util.spec_from_file_location("signal_check", Path(__file__).parents[1] / "signal-check.py")
 CHECK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECK)
@@ -15,7 +17,9 @@ SPEC.loader.exec_module(CHECK)
 
 class SignalRestorationTests(unittest.TestCase):
     def test_connected_terminal_requires_cursor_and_alternate_screen_restoration(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+                "TERM": "dumb", "COLORTERM": "caller", "NO_COLOR": "1",
+                "BREE_DATA_DIR": "/caller/private-store"}):
             root = Path(directory)
             for sequence in (b"", b"\x1b[?25h", b"\x1b[?1049l", b"\x1b[?25h\x1b[?1049l"):
                 with self.subTest(sequence=sequence):
@@ -23,6 +27,10 @@ class SignalRestorationTests(unittest.TestCase):
                     binary.write_text(
                         "#!" + sys.executable + "\n"
                         "import os, signal, termios, tty\n"
+                        "assert os.environ['TERM'] == 'xterm-256color'\n"
+                        "assert os.environ['COLORTERM'] == 'truecolor'\n"
+                        "assert 'NO_COLOR' not in os.environ\n"
+                        f"assert os.environ['BREE_DATA_DIR'] == {str(root / 'data')!r}\n"
                         "before = termios.tcgetattr(0)\n"
                         "def stop(*_):\n"
                         "    termios.tcsetattr(0, termios.TCSANOW, before)\n"

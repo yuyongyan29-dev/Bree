@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 from pty_screen import Screen
+from check_env import bree_environment
 
 MAX_JOURNAL_BYTES = 10 * 1024 * 1024
 MUTABLE_FLAGS = os.O_APPEND | os.O_ASYNC | os.O_SYNC | os.O_DSYNC | os.O_NONBLOCK
@@ -125,8 +126,7 @@ class PtySession:
         self.screen = Screen(140, 40)
         self.raw_path = raw_path
         self.captured = bytearray()
-        env = os.environ.copy()
-        env.update(TERM="xterm-256color", BREE_DATA_DIR=str(data_dir))
+        env = bree_environment(data_dir)
         try:
             self.child = subprocess.Popen([str(binary)], stdin=self.slave, stdout=self.slave,
                                           stderr=self.slave, env=env)
@@ -207,8 +207,7 @@ class PtySession:
 
 def cli_read(binary, data_dir, evidence, index, limit=50):
     command = [str(binary), "history", "--json", "--limit", str(limit)]
-    env = os.environ.copy()
-    env["BREE_DATA_DIR"] = str(data_dir)
+    env = bree_environment(data_dir)
     stdout = evidence / f"cli-{index}.stdout.json"
     stderr = evidence / f"cli-{index}.stderr.txt"
     row = {"command": command, "elapsed_ms": None, "exit_code": None,
@@ -279,8 +278,7 @@ def corrupted_history(binary, root, evidence):
         stream.write(run_records(UNFINISHED_ID, time.time_ns() // 1_000_000, finished=False))
     before = digest_tree(root)
     command = [str(binary), "history", "--json", "--limit", "1"]
-    env = os.environ.copy()
-    env["BREE_DATA_DIR"] = str(root)
+    env = bree_environment(root)
     child = subprocess.run(command, env=env, capture_output=True, timeout=15)
     (evidence / "corrupt-cli.stdout.txt").write_bytes(child.stdout)
     (evidence / "corrupt-cli.stderr.txt").write_bytes(child.stderr)

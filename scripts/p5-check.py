@@ -19,6 +19,8 @@ import sys
 import time
 from pathlib import Path
 
+from check_env import bree_environment
+
 ROOT = Path(__file__).resolve().parent.parent
 CHECKS = ("fmt", "clippy", "rust-tests", "script-tests", "build", "doctor",
           "benchmark", "terminal", "theme", "signal", "history", "soak", "visual")
@@ -33,8 +35,8 @@ def digest(path):
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
-def capture(command):
-    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+def capture(command, env=None):
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, env=env)
     return {"command": command, "exit_code": result.returncode,
             "stdout": result.stdout.strip(), "stderr": result.stderr.strip()}
 
@@ -216,7 +218,8 @@ def main():
     temporary.mkdir(mode=0o700)
     # Theme checks and Rust tests create their own private stores under TMPDIR.
     # Keep those stores inside this run as well as the explicit BREE_DATA_DIR.
-    env = dict(os.environ, BREE_DATA_DIR=str(output / "empty-data"), TMPDIR=str(temporary))
+    env = bree_environment(output / "empty-data")
+    env["TMPDIR"] = str(temporary)
     binary = ROOT / "target/release/bree"
     manifest = source_manifest()
     (output / "source-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -279,7 +282,7 @@ def main():
         if not check("build", ["cargo", "build", "--locked", "--release"], 900):
             return 1
         report["binary"] = {"path": str(binary), "sha256": digest(binary),
-                            "bytes": binary.stat().st_size, "version": capture([str(binary), "--version"])}
+                            "bytes": binary.stat().st_size, "version": capture([str(binary), "--version"], env=env)}
         if source_manifest()["sha256"] != manifest["sha256"]:
             report["build_consistency"] = "failed: source changed during checks/build"
             return 1

@@ -68,6 +68,9 @@ impl PtyChild {
         let mut command = Command::new(env!("CARGO_BIN_EXE_bree"));
         command
             .env("TERM", "xterm-256color")
+            .env("COLORTERM", "truecolor")
+            .env_remove("NO_COLOR")
+            .env_remove("COLORFGBG")
             // Viewing and signal fixtures must not even read the user's rules.
             // Store observations do not create this absent private directory.
             .env(

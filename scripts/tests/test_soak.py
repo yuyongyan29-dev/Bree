@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).parents[1]
 sys.path.insert(0, str(SCRIPTS))
@@ -20,6 +21,10 @@ RESOURCES = ("bree Memory\nSample UTC 01:02:03 · 10 ms\n"
              "/ Search names, Bundle ID or exact PID\nEsc Home\nMemory · 2.0s refresh")
 FAKE = r'''#!INTERPRETER
 import os,select,sys,termios,time,tty
+assert os.environ['TERM']=='xterm-256color'
+assert os.environ['COLORTERM']=='truecolor'
+assert 'NO_COLOR' not in os.environ
+assert os.environ['BREE_DATA_DIR']!='/caller/private-store'
 before=termios.tcgetattr(0)
 tty.setraw(0)
 page='resources' if len(sys.argv)>1 else 'home'
@@ -98,7 +103,9 @@ class SoakTests(unittest.TestCase):
             args = argparse.Namespace(binary=binary, output=folder / "soak.json",
                                       home_seconds=.3, resources_seconds=.4,
                                       watch_seconds=.4, sample_interval=.08)
-            report = SOAK.run(args)
+            with patch.dict(os.environ, {"BREE_DATA_DIR": "/caller/private-store", "TERM": "dumb",
+                                         "COLORTERM": "caller", "NO_COLOR": "1"}):
+                report = SOAK.run(args)
             self.assertEqual(report["status"], "passed", report.get("error"))
             for name in ("home", "resources", "watch"):
                 row = report[name]
@@ -137,12 +144,15 @@ class SoakTests(unittest.TestCase):
                 self.assertIsNone(report[name]["average_cpu_one_core_percent"])
                 self.assertIsNone(report[name]["rss_p95_bytes"])
 
-    def test_relative_data_dir_rejected(self):
-        from unittest.mock import patch
+    def test_relative_caller_data_dir_is_ignored(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"BREE_DATA_DIR": "relative"}):
             args = argparse.Namespace(binary=Path("unused"), output=Path(directory) / "soak.json")
-            with self.assertRaisesRegex(ValueError, "absolute"):
+            with patch.object(SOAK, "observe") as observe:
                 SOAK.run(args)
+            store = Path(observe.call_args.args[2]["BREE_DATA_DIR"])
+            self.assertTrue(store.is_absolute())
+            self.assertEqual(store.parent.parent, Path(directory).resolve())
+            self.assertFalse(store.parent.exists())
 
     def test_screen_failure_still_reaps_owned_children(self):
         from unittest.mock import patch

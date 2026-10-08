@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 from pty_screen import Screen
+from check_env import empty_bree_environment
 
 MUTABLE_FLAGS = os.O_APPEND | os.O_ASYNC | os.O_SYNC | os.O_DSYNC | os.O_NONBLOCK
 SAMPLE = re.compile(r"(?:Sample )?UTC (\d{2}:\d{2}:\d{2}) · (\d+) ms")
@@ -291,13 +292,12 @@ class Session:
 
 def run(args):
     output = args.output.resolve()
-    output.parent.mkdir(parents=True, exist_ok=True)
+    with empty_bree_environment(output) as env:
+        return observe(args, output, env)
+
+
+def observe(args, output, env):
     binary = args.binary.resolve()
-    env = os.environ.copy()
-    env["TERM"] = "xterm-256color"
-    env.setdefault("BREE_DATA_DIR", str(output.parent / "soak-data"))
-    if not Path(env["BREE_DATA_DIR"]).is_absolute():
-        raise ValueError("BREE_DATA_DIR must be absolute")
     sessions = []
     report = {"status": "unknown", "sample_interval_seconds": args.sample_interval,
               "data_dir": env["BREE_DATA_DIR"],

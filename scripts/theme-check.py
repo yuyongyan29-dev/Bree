@@ -15,6 +15,8 @@ import termios
 import time
 from pathlib import Path
 
+from check_env import bree_environment
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--binary", type=Path, default=Path("target/release/bree"))
 parser.add_argument("--output", type=Path)
@@ -61,11 +63,8 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
     pixel_enabled = color_profile in ("rgb", "256")
     screen = Screen(columns, rows, pixel_enabled)
     with tempfile.TemporaryDirectory(prefix="bree-theme-check-") as temporary:
-        env = os.environ.copy()
-        env.pop("NO_COLOR", None)
-        env.pop("COLORTERM", None)
-        env.update(TERM="xterm-256color", COLORTERM="truecolor", COLORFGBG=colorfgbg,
-                   BREE_DATA_DIR=str(Path(temporary) / "store"))
+        env = bree_environment(Path(temporary) / "store")
+        env["COLORFGBG"] = colorfgbg
         if color_profile != "rgb":
             env.pop("COLORTERM", None)
         if color_profile == "none":

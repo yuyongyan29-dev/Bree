@@ -13,6 +13,8 @@ import termios
 import time
 from pathlib import Path
 
+from check_env import empty_bree_environment
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--binary", type=Path, default=Path("target/release/bree"))
 parser.add_argument("--runs", type=int, default=20)
@@ -23,14 +25,12 @@ mutable_flags = os.O_APPEND | os.O_ASYNC | os.O_SYNC | os.O_DSYNC | os.O_NONBLOC
 if args.runs < 20:
     parser.error("at least 20 runs are required")
 
-def session(keys, size=(28, 100), marker=b"Analyzing", timeout=10, expected_exit=0):
+def session(keys, size=(28, 100), marker=b"Analyzing", timeout=10, expected_exit=0, *, env):
     master, slave = pty.openpty()
     before = termios.tcgetattr(slave)
     before[3] &= ~termios.PENDIN  # Darwin line-discipline state, not an input-mode setting.
     flags_before = fcntl.fcntl(slave, fcntl.F_GETFL)
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", *size, 0, 0))
-    env = os.environ.copy()
-    env["TERM"] = "xterm-256color"
     start = time.perf_counter()
     child = subprocess.Popen([str(binary)], stdin=slave, stdout=slave, stderr=slave, env=env)
     collected = bytearray()
@@ -78,11 +78,13 @@ def session(keys, size=(28, 100), marker=b"Analyzing", timeout=10, expected_exit
             os.close(master)
         os.close(slave)
 
-times = [session(b"q")[0] for _ in range(args.runs)]
-result_times = [session(b"q", marker="GiB".encode())[0] for _ in range(args.runs)]
-_, ctrl_c = session(b"\x03", expected_exit=130)
-_, tiny = session(b"q", size=(5, 20), marker=b"Resize")
+with empty_bree_environment(args.output) as env:
+    times = [session(b"q", env=env)[0] for _ in range(args.runs)]
+    result_times = [session(b"q", marker="GiB".encode(), env=env)[0] for _ in range(args.runs)]
+    _, ctrl_c = session(b"\x03", expected_exit=130, env=env)
+    _, tiny = session(b"q", size=(5, 20), marker=b"Resize", env=env)
 report = {
+    "data_dir": env["BREE_DATA_DIR"],
     "runs": args.runs,
     "skeleton_p95_ms": sorted(times)[max(0, int(len(times) * .95) - 1)],
     "first_home_result_p95_ms": sorted(result_times)[max(0, int(len(result_times) * .95) - 1)],

@@ -97,12 +97,17 @@ class MeasurementTests(unittest.TestCase):
     def test_actual_cli_command_data_scope_and_finished_unfinished_contract(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            with patch.object(benchmark.subprocess, "run", return_value=subprocess.CompletedProcess(
+            with patch.dict(os.environ, {"BREE_DATA_DIR": "/caller/private-store", "TERM": "dumb",
+                                         "COLORTERM": "caller", "NO_COLOR": "1"}), \
+                    patch.object(benchmark.subprocess, "run", return_value=subprocess.CompletedProcess(
                     [], 0, self.cli_output(), b"")) as call:
                 row = benchmark.cli_read(Path("/bree"), root / "data", root, 0)
             self.assertEqual(row["status"], "passed")
             self.assertEqual(call.call_args.args[0], ["/bree", "history", "--json", "--limit", "50"])
             self.assertEqual(call.call_args.kwargs["env"]["BREE_DATA_DIR"], str(root / "data"))
+            self.assertEqual(call.call_args.kwargs["env"]["TERM"], "xterm-256color")
+            self.assertEqual(call.call_args.kwargs["env"]["COLORTERM"], "truecolor")
+            self.assertNotIn("NO_COLOR", call.call_args.kwargs["env"])
             self.assertFalse(row["replay_enabled"])
             self.assertTrue(row["unfinished_without_result"])
             self.assertTrue(Path(row["stdout"]).is_file())
