@@ -6,7 +6,6 @@ use std::path::{Component, Path};
 
 const CODEX_APP_CLI: &str =
     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
-const VERIFIED_CLAUDE_VERSION: &str = "2.1.292";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DevelopmentLabel {
@@ -31,7 +30,7 @@ pub fn label_process(process: &ProcessInfo) -> Option<DevelopmentLabel> {
     } else if verified_claude_native_installation(executable) {
         (
             "Claude Code",
-            "Exact executable path of a native Claude installation; only the locally verified 2.1.292 layout is recognized",
+            "Exact executable path of a native Claude installation in ~/.local/share/claude/versions/<numeric version>; layout verified locally with 2.1.290–2.1.294 samples, version not checked against a verified list",
         )
     } else {
         return None;
@@ -63,7 +62,17 @@ fn verified_claude_native_installation(path: &str) -> bool {
         && *share == Component::Normal("share".as_ref())
         && *claude == Component::Normal("claude".as_ref())
         && *versions == Component::Normal("versions".as_ref())
-        && *version == Component::Normal(VERIFIED_CLAUDE_VERSION.as_ref()))
+        && version.as_os_str().to_str().is_some_and(numeric_version))
+}
+
+/// The native updater names each executable after its release, such as `2.1.294`.
+/// Only plain MAJOR.MINOR.PATCH digits match; suffixes, signs and extra parts do not.
+fn numeric_version(value: &str) -> bool {
+    let parts: Vec<_> = value.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| (1..=9).contains(&part.len()) && part.bytes().all(|b| b.is_ascii_digit()))
 }
 
 #[cfg(test)]
@@ -116,13 +125,39 @@ mod tests {
     }
 
     #[test]
+    fn claude_label_follows_native_updates_without_a_pinned_version() {
+        for version in ["2.1.290", "2.1.293", "2.1.294", "3.0.0", "10.20.300"] {
+            let path = format!("/Users/test/.local/share/claude/versions/{version}");
+            let label = label_process(&process(Some(&path)));
+            assert_eq!(
+                label.map(|l| l.label).as_deref(),
+                Some("Claude Code"),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
     fn generic_runtimes_names_versions_and_similar_paths_do_not_label() {
         for path in [
             "/opt/homebrew/bin/node",
             "/usr/bin/python3",
             "/usr/local/bin/claude",
-            "/Users/test/.local/share/claude/versions/2.1.293",
             "/Users/test/.local/share/claude/versions/2.1.292/helper",
+            "/Users/test/.local/share/claude/versions",
+            "/Users/test/.local/share/claude/2.1.292",
+            "/Users/.local/share/claude/versions/2.1.292",
+            "/Users/test/.local/share/claude/versions/latest",
+            "/Users/test/.local/share/claude/versions/2.1",
+            "/Users/test/.local/share/claude/versions/2.1.294.1",
+            "/Users/test/.local/share/claude/versions/2.1.294-beta",
+            "/Users/test/.local/share/claude/versions/v2.1.294",
+            "/Users/test/.local/share/claude/versions/+2.1.294",
+            "/Users/test/.local/share/claude/versions/2..294",
+            "/Users/test/.local/share/claude/versions/2.1.",
+            "/Users/test/.local/share/claude/versions/1234567890.1.1",
+            "/Users/test/.local/share/claude/versions/２.1.294",
+            "/Users/test/.local/share/claude/versions/2.1.294 ",
             "/Users/test/other/.local/share/claude/versions/2.1.292",
             "/Users/test/.local/share/claude/versions/../2.1.292",
             "/Applications/Fake.app/Contents/MacOS/codex",
