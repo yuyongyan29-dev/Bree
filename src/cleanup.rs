@@ -795,6 +795,7 @@ mod tests {
                         name: name.clone(),
                         leader_pid: 100 + n,
                         frontmost: false,
+                        activation_policy: ActivationPolicy::Regular,
                     }),
                     method: "appkit_main_application".into(),
                     confidence: "high".into(),

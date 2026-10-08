@@ -71,7 +71,7 @@ bree history --json --limit 20
 
 CPU 首次采样只建立基线，后续采样使用实际时间差计算单核百分比。采样覆盖数和每个指标的有效性字段说明哪些数据可读。
 
-应用分组基于主应用和 bundle 内安装位置等证据。归属冲突与未知进程独立保留，每个进程只加入一组。AI／开发工具标签只覆盖已验证的安装布局，不表示任务完成、共享关系或可安全回收；未知的 node、python 等进程不会被猜测为某个 AI 任务。
+应用分组基于主应用和 bundle 内安装位置等证据。只有普通应用（AppKit 激活策略为 Regular，通常显示在程序坞中）作为主应用；嵌套在主应用 bundle 内的 helper 应用并入该主应用，独立的菜单栏或后台应用不单独成组，显示为未归属进程，也不能设置规则。归属冲突与未知进程独立保留，每个进程只加入一组。AI／开发工具标签只覆盖已验证的安装布局，不表示任务完成、共享关系或可安全回收；未知的 node、python 等进程不会被猜测为某个 AI 任务。
 
 ## 允许与保护规则
 
@@ -104,6 +104,8 @@ bree clean --yes --json
 JSON 的 `schema_version` 为 1。数值内部使用字节，文本显示 MiB／GiB。每个指标包含 `value`、`status`、`source` 和 `reason`；未知或无权限时使用 `null`，不填零。
 
 `list` 新增 `view` 元数据：`search` 为查询，`sort` 为排序方式，`total_groups` 为完整样本的分组总数，`matched_groups` 为查询匹配数，`shown_groups` 为限制数量后显示的分组数。`groups` 受查询、排序与 `--limit` 影响，`processes`、`coverage`、`policy` 保留完整样本，`schema_version` 仍为 1。
+
+进程归属中的 `attribution.application.activation_policy` 记录主应用的激活策略，当前输出中只会出现 `regular`。
 
 `list`／`watch` 输出含策略分类及有效性；`clean --dry-run` 含采样时间、规则修订、分类数量、逐项理由与 `read_only: true`。会话结果另含运行 ID、逐项事实、资源变化、取消标记和错误；缺失的操作后资源为 `null`。
 

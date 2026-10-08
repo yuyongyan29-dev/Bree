@@ -1,5 +1,5 @@
 //! Deterministic classification and exact installation rules. No process actions.
-use crate::model::{Category, ProcessIdentity, ProcessInfo, Snapshot, Validity};
+use crate::model::{ActivationPolicy, Category, ProcessIdentity, ProcessInfo, Snapshot, Validity};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Component, Path};
@@ -260,6 +260,9 @@ fn scoped_leader<'a>(
         return Err("The main app or current group instance identity conflicts.".into());
     }
     let app = leader.attribution.application.as_ref().unwrap();
+    if app.activation_policy != ActivationPolicy::Regular {
+        return Err("The AppKit app is not an ordinary Regular app; helper, menu bar and background apps remain read-only.".into());
+    }
     let scope = AppScope {
         bundle_id: app
             .bundle_id
@@ -558,6 +561,7 @@ mod tests {
                         name: "Example".into(),
                         leader_pid: 42,
                         frontmost: false,
+                        activation_policy: ActivationPolicy::Regular,
                     }),
                     method: "appkit_main_application".into(),
                     confidence: "high".into(),
@@ -625,6 +629,39 @@ mod tests {
             plan.entries[0].target_identity,
             Some(snapshot.processes[0].identity.clone())
         );
+    }
+
+    #[test]
+    fn non_regular_apps_get_no_scope_and_stay_protected_even_with_allow() {
+        let regular = application_snapshot();
+        let state = allowed(&regular);
+        for policy in [
+            ActivationPolicy::Accessory,
+            ActivationPolicy::Prohibited,
+            ActivationPolicy::Unknown,
+        ] {
+            let mut snapshot = regular.clone();
+            snapshot.processes[0]
+                .attribution
+                .application
+                .as_mut()
+                .unwrap()
+                .activation_policy = policy;
+            snapshot.processes[0].quit_supported = true;
+            assert!(scope_for_group(&snapshot, &snapshot.groups[0].id).is_err());
+            let plan = evaluate(
+                &snapshot,
+                &state,
+                &PolicyContext {
+                    state_valid: true,
+                    a1_enabled: true,
+                },
+            );
+            assert_eq!(plan.protected_count, 1, "{policy:?}");
+            assert_eq!(plan.pending_count, 0);
+            assert!(plan.entries[0].matched_rule_ids.is_empty());
+            assert!(plan.entries[0].reasons[0].contains("not an ordinary Regular app"));
+        }
     }
 
     #[test]
