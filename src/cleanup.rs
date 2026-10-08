@@ -656,6 +656,11 @@ pub fn resource_text(before: &SystemMemory, after: Option<&SystemMemory>) -> Str
 mod native;
 #[cfg(target_os = "macos")]
 use native::NativeBackend;
+// A standalone main-thread harness links an isolated --cfg test library.
+// This module and its exact-fixture permit are absent from normal/release builds.
+#[cfg(all(test, target_os = "macos"))]
+#[path = "../tests/fixtures/p2_session_access.rs"]
+pub mod p2_session_access;
 #[cfg(not(target_os = "macos"))]
 struct NativeBackend;
 #[cfg(not(target_os = "macos"))]

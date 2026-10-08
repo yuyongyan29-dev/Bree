@@ -1,0 +1,92 @@
+# AGENTS.md
+
+本文件适用于整个 Bree 仓库，补充全局代理规则。项目级代理说明维护在这里；如需 `CLAUDE.md` 兼容入口，只引用本文件，不复制规则。
+
+## 项目定位与事实来源
+
+- Bree 是轻量的 macOS 本机内存查看工具，使用 Rust 实现 CLI 与键盘 TUI；规则、清理预演和处理记录也属于当前范围。AI／开发工具标签用于解释归属，不代表任务已完成或可以安全回收。
+- 当前仓库是独立 CLI。不要因其他产品形态引入 Web 前端、本地 HTTP 服务、默认常驻进程或运行时语言环境。普通命令完成后退出，持续观察由资源页与显式 `watch` 承担。
+- 实际行为先查看实现和测试，再核对 [使用说明](docs/cli.md)。安装与兼容范围查看 [安装说明](docs/installation.md)，开发流程查看 [贡献指南](CONTRIBUTING.md)。历史设计不能证明功能已经实现或平台已经验证。
+- 工具链以 [rust-toolchain.toml](rust-toolchain.toml) 为准；包版本、依赖与锁定结果分别以 [Cargo.toml](Cargo.toml)、[Cargo.lock](Cargo.lock) 为准。不要把本机或 CI 测试通过扩大为所有 macOS 版本受支持。
+- CLI 帮助、错误和 TUI 当前使用英文。用户行为或安装方式变化时同步更新 [英文 README](README.md)、[中文 README](README.zh-CN.md) 与相关 `docs/`，避免两种语言承诺不同能力。
+
+## 源码入口
+
+| 改动内容 | 主要入口 |
+|---|---|
+| 参数、命令分发、退出码 | `src/main.rs` |
+| TUI 页面、输入、刷新与终端恢复 | `src/tui.rs` |
+| 首页标识与静态像素素材 | `src/brand.rs`、`assets/bree-mascot.txt` |
+| 数据模型、指标有效性、实例身份 | `src/model.rs` |
+| 采集、分组与开发工具归属 | `src/collect.rs`、`src/attribution.rs`、`src/platform/macos.rs` |
+| 搜索与排序、文本和 JSON 导出 | `src/query.rs`、`src/output.rs` |
+| 规则、预演、处理会话与原生退出适配 | `src/policy.rs`、`src/preview.rs`、`src/cleanup.rs`、`src/platform/actions_macos.rs` |
+| 本地状态、锁、日志与历史 | `src/storage.rs`、`src/history.rs` |
+| 集成验证、原生退出实验 | `tests/`、`scripts/`、`examples/quit_probe.rs` |
+| 安装、打包与依赖许可声明 | `distribution/`、`.github/workflows/ci.yml` |
+
+CLI 与 TUI 共用采集、查询、规则和会话逻辑；修复共同问题时改共享模块，避免各自维护一套行为。macOS 专属能力留在平台适配层，AppKit 控制对象保留在主线程，不传入采样工作线程。
+
+## 不可绕过的行为边界
+
+### 退出与清理
+
+- **当前 A1（应用正常退出）能力硬关闭**：`src/cleanup.rs` 的 `enabled()` 返回 `false`。允许规则、`--yes`、环境变量或新 UI 入口都不能绕过能力检查。普通功能改动不得顺带启用它。
+- 如任务涉及启用退出能力，按 `CONTRIBUTING.md` 提供精确实例控制、前台保护、文档保存、取消、记录失败与重启路径的原生验证证据；假 backend 测试不构成原生能力证明，能力不可靠时保持只读。
+- 保护规则优先于允许规则。规则绑定确切 bundle ID、应用安装路径与主可执行路径；不得扩大为名称、通配符、PID 或整棵子进程树。系统、前台、身份缺失、归属冲突、未知 helper 和 AI 开发工具继续遵循现有保护规则。
+- 对象 ID 只描述当前实例，不是可跨启动复用的停止凭据。执行前重验实例、规则与前台状态；冻结对象失效后跳过，不重新绑定复用的 PID，不追杀重启的新实例。
+- 不引入强制结束兜底、后台自动清理或用户文件清理。拒绝、超时、取消、未知与实际退出分别记录；请求被接受不等于退出成功，RSS 下降不等于可归因的释放量。
+- 保持单执行者、必要日志写入与取消检查。历史读取不得重放请求；缺少结束记录时保留 `unfinished`，零请求批次不得伪造操作后指标或回收成果。
+
+### 指标、查询与输出
+
+- 未知、无权限、不支持、失效与真实零值分开处理，保留 `Metric` 的 `value/status/source/reason`。内部使用字节，文本使用 MiB／GiB；进程统一使用 RSS，不把分组总量当作系统已用或可回收内存。
+- 每个进程只属于一个分组；归属冲突与未知对象明确保留。不依据名称或高内存占用推断某个 AI 任务已完成。CPU 首次采样只建基线，后续使用实际时间差。
+- 搜索和排序使用共享 `src/query.rs`。搜索仅改变显示结果，不改变分类、规则或清理候选；`list` 的 `groups` 可筛选和截断，`processes`、`coverage`、`policy` 保留完整样本。
+- 保持已声明的 JSON schema、有效性字段和退出码契约；不静默改变现有字段含义。stdout 只输出结果，诊断写 stderr，`watch --json` 保持 JSONL。变更对应检查在 `tests/cli_contract.rs`。
+- 复用 `safe_text` 和路径脱敏逻辑处理外部名称与输出；默认导出不暴露路径，不采集或记录完整命令行、环境变量、提示词与聊天内容。
+
+### 存储与终端
+
+- 普通查看、`history`、`doctor` 不创建数据文件；预演不发送退出请求，但会写入摘要，不能把 `--dry-run` 当作零磁盘写入。
+- 保持私有目录／文件权限、状态原子更新、并发锁与日志容量限制。配置损坏、未知版本或权限不安全时保留原文件，关闭依赖规则的操作，不重置为空配置；普通内存查看仍可继续。
+- 手动验证涉及规则、预演或会话时，使用独立的绝对路径 `BREE_DATA_DIR`，避免修改真实用户数据。例如：
+
+  ```sh
+  BREE_DATA_DIR="$PWD/.artifacts/dev-data" ./target/release/bree
+  ```
+
+- Home 首次采样后静置，Preview 保留冻结结果直到显式刷新；不要为了动画或装饰添加持续扫描。资源页与 watch 的刷新行为保持可控。
+- 退出、取消、信号、终端断开和错误路径都要恢复终端模式与文件标志，并回收采样线程。改输入时保留搜索编辑与普通导航的按键区别；改布局时覆盖最小 48×16、窗口缩放及浅／深色终端。
+
+## 验证方式
+
+代码改动按 [CI](.github/workflows/ci.yml) 和贡献指南运行：
+
+```sh
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+```
+
+需要运行 release 二进制或验证打包时先执行 `cargo build --locked --release`，不要把旧构建的运行结果当作本次改动的验证。
+
+- TUI 输入、主题或终端生命周期改动：按影响选用 `scripts/terminal-check.py`、`scripts/theme-check.py`、`scripts/signal-check.py`，结合 `tests/tui_signals.rs`；PTY 测试不能代替真实终端的视觉检查。
+- 采集或刷新性能改动：使用 `tests/collection_live.rs`、`tests/cpu_load.rs` 及相应的 benchmark／soak 脚本，记录平台与实际测量结果。先阅读脚本参数与副作用，再运行。
+- 原生退出实验只操作本次自建的 `tests/fixtures/QuitFixture.swift` 应用，入口是 `scripts/probe-quit.zsh`；不拿用户正在使用的应用做隐式测试目标。
+- 安装器或发行工具改动增加以下检查，安装器测试使用模拟下载：
+
+  ```sh
+  sh -n distribution/install.sh distribution/package.sh
+  python3 distribution/tests/test_install.py
+  ```
+
+- 纯文档改动核对事实、路径与 Markdown，并运行 `git diff --check`，无需无关的构建或原生实验。交付说明只报告实际执行的验证，注明未验证的平台或交互。
+
+## 仓库与发行
+
+- 本地构建与实验输出放在已忽略的 `target/` 或 `.artifacts/`；不提交原始进程快照、个人路径、密钥、内部设计资料或未使用素材。不要因目录被忽略就删除用户已有内容。
+- `distribution/package.sh` 仅准备本地发行资产。包版本取自 `Cargo.toml`，默认 curl 安装版本由 `distribution/latest-version.txt` 单独选择；不能仅因改了包版本就声称安装入口已经更新。
+- 依赖改动核对 `Cargo.lock` 与 `THIRD-PARTY-NOTICES.txt`，声明生成入口是 `distribution/notices.py`。保留现有项目许可与随程序分发的声明。
+- 安装器保持校验后原子替换、失败保留旧程序，不自动使用 sudo、改写 shell 配置、移除 quarantine 或绕过系统校验。
+- 推送代码、本地打包、发布 GitHub Release 与更新 Homebrew tap 是不同动作，按用户授权范围执行并分别报告；本地成功不代表发行资产、默认安装入口或干净账号安装已验证。

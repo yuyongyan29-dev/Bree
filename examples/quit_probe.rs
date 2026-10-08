@@ -1,4 +1,6 @@
-//! M0 / M3 experiment, separate from the Bree binary.
+//! M0 / M3 mechanism experiment, separate from the Bree binary.
+//! This duplicates mechanism checks and is not production Session acceptance.
+//! Use scripts/probe-quit.zsh --p2 for the isolated cfg(test) production-path harness.
 //! Only NSRunningApplication objects for children spawned here can receive a request.
 //! No PID argument, signal, forceTerminate, automation permission, or user-app control.
 
@@ -30,6 +32,7 @@ mod macos {
     use std::{
         error::Error,
         fs,
+        io::Write,
         os::unix::process::ExitStatusExt,
         path::{Path, PathBuf},
         process::{Child, Command},
@@ -186,6 +189,16 @@ mod macos {
             .spawn()?;
         let started = Instant::now();
         let pid = child.id() as i32;
+        let mut manifest = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(output.join("owned-children.jsonl"))?;
+        writeln!(
+            manifest,
+            "{}",
+            json!({"pid":pid,"executable":executable,"case":case})
+        )?;
+        manifest.flush()?;
         let app = loop {
             pump();
             if let Some(app) = running_app(pid).filter(|app| {
@@ -267,7 +280,9 @@ mod macos {
         event(
             "suite",
             "start",
-            json!({"suite":if m3 {"m3"} else {"m0"},"scope":"own_children_only","observation_seconds":OBSERVE_SECONDS,"force_termination_available":false}),
+            json!({"suite":if m3 {"m3"} else {"m0"},"scope":"own_children_only","observation_seconds":OBSERVE_SECONDS,"force_termination_available":false,
+                "evidence_kind":"mechanism_probe","production_session_used":false,
+                "document_quit_adapter":"fixture_explicit_apple_event_handler"}),
         );
         let mut passed = true;
         let mut all_children_reaped_successfully = true;
