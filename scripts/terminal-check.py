@@ -86,6 +86,8 @@ report = {
     "runs": args.runs,
     "skeleton_p95_ms": sorted(times)[max(0, int(len(times) * .95) - 1)],
     "first_home_result_p95_ms": sorted(result_times)[max(0, int(len(result_times) * .95) - 1)],
+    "skeleton_samples_ms": times,
+    "first_home_result_samples_ms": result_times,
     "terminal_restored_after_q": True,
     "terminal_restored_after_ctrl_c": True,
     "terminal_file_flags_restored": True,
