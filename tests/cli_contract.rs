@@ -20,7 +20,7 @@ fn naked_command_without_tty_never_waits_for_input() {
 #[test]
 fn all_command_help_is_in_english() {
     for subcommand in [
-        "", "status", "list", "inspect", "watch", "doctor", "clean", "history", "license",
+        "", "status", "list", "inspect", "watch", "doctor", "clean", "license",
     ] {
         let args = if subcommand.is_empty() {
             vec!["--help"]
@@ -194,32 +194,15 @@ fn installed_program_carries_project_and_dependency_notices_without_storage() {
     assert!(!directory.exists());
 }
 
-#[test]
-fn noninteractive_cleanup_requires_consent_and_never_supports_force() {
-    for args in [
-        vec!["clean"],
-        vec!["clean", "--force", "--yes"],
-        vec!["clean", "--dry-run", "--yes"],
-    ] {
-        let output = bree(&args);
-        assert_eq!(output.status.code(), Some(2));
-        assert!(output.stdout.is_empty());
-    }
-}
-
 #[cfg(target_os = "macos")]
 mod rules {
     use super::*;
     use bree_cli::storage::Store;
     use std::{
         fs,
-        os::fd::AsRawFd,
         os::unix::fs::PermissionsExt,
         path::PathBuf,
-        process::{Child, Stdio},
         sync::atomic::{AtomicU64, Ordering},
-        thread,
-        time::{Duration, Instant},
     };
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     struct IsolatedStore(PathBuf);
@@ -256,79 +239,6 @@ mod rules {
         }
     }
 
-    // Any assertion failure still reaps only the batch created by this test.
-    struct OwnedBatch(Option<Child>);
-    impl OwnedBatch {
-        fn spawn(store: &IsolatedStore) -> Self {
-            Self(Some(
-                Command::new(env!("CARGO_BIN_EXE_bree"))
-                    .env("BREE_DATA_DIR", &store.0)
-                    .args(["clean", "--yes", "--json"])
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .spawn()
-                    .unwrap(),
-            ))
-        }
-        fn cancel_while_lane_owned(&mut self, lane: &fs::File) {
-            let deadline = Instant::now() + Duration::from_secs(5);
-            loop {
-                // The lane is acquired after CLI signal registration. A failed
-                // probe proves this exact child is in Session::start, while the
-                // parent's journal lock prevents its started record completing.
-                let locked =
-                    unsafe { libc::flock(lane.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-                if locked != 0 {
-                    assert_eq!(
-                        std::io::Error::last_os_error().kind(),
-                        std::io::ErrorKind::WouldBlock
-                    );
-                    break;
-                }
-                assert_eq!(unsafe { libc::flock(lane.as_raw_fd(), libc::LOCK_UN) }, 0);
-                assert!(
-                    self.0.as_mut().unwrap().try_wait().unwrap().is_none(),
-                    "owned batch exited before entering the execution lane"
-                );
-                assert!(
-                    Instant::now() < deadline,
-                    "owned batch never acquired its lane"
-                );
-                thread::sleep(Duration::from_millis(2));
-            }
-            let pid = self.0.as_ref().unwrap().id() as i32;
-            assert_eq!(unsafe { libc::kill(pid, libc::SIGINT) }, 0);
-        }
-        fn output_within(&mut self, timeout: Duration) -> Output {
-            let deadline = Instant::now() + timeout;
-            loop {
-                if self.0.as_mut().unwrap().try_wait().unwrap().is_some() {
-                    break;
-                }
-                assert!(
-                    Instant::now() < deadline,
-                    "cancelled owned batch did not finish within {timeout:?}"
-                );
-                thread::sleep(Duration::from_millis(5));
-            }
-            self.0.take().unwrap().wait_with_output().unwrap()
-        }
-    }
-    impl Drop for OwnedBatch {
-        fn drop(&mut self) {
-            if let Some(child) = self.0.as_mut() {
-                match child.try_wait() {
-                    Ok(Some(_)) => {}
-                    _ => {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                    }
-                }
-            }
-        }
-    }
-
     #[test]
     fn reading_with_no_config_creates_nothing_and_explains_zero_candidates() {
         let store = IsolatedStore::new();
@@ -350,7 +260,7 @@ mod rules {
                 assert_eq!(row["policy"]["automatic_count"], 0);
                 assert_eq!(row["policy"]["read_only"], true);
             } else {
-                assert_eq!(row["capabilities"]["cleanup_enabled"], false);
+                assert!(row["capabilities"].get("cleanup_enabled").is_none());
                 assert_eq!(row["capabilities"]["dry_run_enabled"], true);
                 assert_eq!(row["rule_storage"]["write_status"], "not_probed");
             }
@@ -485,11 +395,8 @@ mod rules {
                 .iter()
                 .all(|entry| entry["disposition"] == "protected")
         );
-        for args in [
-            ["clean", "--dry-run", "--json"],
-            ["clean", "--yes", "--json"],
-        ] {
-            let clean = store.run(&args);
+        {
+            let clean = store.run(&["clean", "--dry-run", "--json"]);
             assert_eq!(clean.status.code(), Some(1));
             let error: Value = serde_json::from_slice(&clean.stdout).unwrap();
             assert_eq!(error["error"]["code"], "runtime_error");
@@ -511,11 +418,6 @@ mod rules {
         assert!(
             String::from_utf8_lossy(&output.stderr).contains("cleanup or dry run is in progress")
         );
-        let batch = store.run(&["clean", "--yes", "--json"]);
-        assert_eq!(batch.status.code(), Some(1));
-        assert!(
-            String::from_utf8_lossy(&batch.stderr).contains("cleanup or dry run is in progress")
-        );
         drop(guard);
         // A directory at the journal path is an actual I/O obstacle even for an admin account.
         fs::create_dir(store.0.join("journal.jsonl")).unwrap();
@@ -523,226 +425,6 @@ mod rules {
         assert_eq!(output.status.code(), Some(1));
         assert!(store.0.join("journal.jsonl").is_dir());
         assert!(!store.0.join("state.json").exists());
-    }
-
-    #[test]
-    fn zero_target_batch_records_result_then_history_reads_without_replay() {
-        let store = IsolatedStore::new();
-        let history = store.run(&["history", "--json"]);
-        assert!(history.status.success());
-        let empty: Value = serde_json::from_slice(&history.stdout).unwrap();
-        assert_eq!(empty["records"].as_array().unwrap().len(), 0);
-        assert!(!store.0.exists());
-        let batch = store.run(&["clean", "--yes", "--json"]);
-        assert!(
-            batch.status.success(),
-            "{}",
-            String::from_utf8_lossy(&batch.stderr)
-        );
-        let result: Value = serde_json::from_slice(&batch.stdout).unwrap();
-        assert_eq!(result["schema_version"], 1);
-        assert_eq!(result["targets"].as_array().unwrap().len(), 0);
-        assert!(result["resource_after"].is_null());
-        assert!(
-            result["resource_observation"]
-                .as_str()
-                .unwrap()
-                .contains("No termination requests were sent")
-        );
-        let before = fs::read(store.0.join("journal.jsonl")).unwrap();
-        let history = store.run(&["history", "--json"]);
-        assert!(history.status.success());
-        let history: Value = serde_json::from_slice(&history.stdout).unwrap();
-        assert_eq!(history["replay_enabled"], false);
-        assert_eq!(history["records"][0]["status"], "finished");
-        assert_eq!(history["records"][0]["result"]["run_id"], result["run_id"]);
-        assert_eq!(fs::read(store.0.join("journal.jsonl")).unwrap(), before);
-        let doctor = store.run(&["doctor", "--json"]);
-        let doctor: Value = serde_json::from_slice(&doctor.stdout).unwrap();
-        assert_eq!(doctor["capabilities"]["cleanup_enabled"], false);
-        assert_eq!(doctor["capabilities"]["cleanup_session_enabled"], true);
-        assert_eq!(doctor["capabilities"]["history_enabled"], true);
-    }
-
-    #[test]
-    fn cancelled_batch_during_started_record_wait_finishes_without_sending_or_replay() {
-        let store = IsolatedStore::new();
-        let initialized = store.run(&["clean", "--yes", "--json"]);
-        assert!(
-            initialized.status.success(),
-            "{}",
-            String::from_utf8_lossy(&initialized.stderr)
-        );
-        let initial: Value = serde_json::from_slice(&initialized.stdout).unwrap();
-        assert!(initial["targets"].as_array().unwrap().is_empty());
-        let journal_lock = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(store.0.join("journal.lock"))
-            .unwrap();
-        // The lock is held only by this parent's owned descriptor, not a fixture App.
-        assert_eq!(
-            unsafe { libc::flock(journal_lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
-            0
-        );
-        let lane = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(store.0.join("execution.lock"))
-            .unwrap();
-        let mut child = OwnedBatch::spawn(&store);
-        child.cancel_while_lane_owned(&lane);
-        // Release within the 250 ms journal-lock budget, after the cancellation
-        // handler has had an opportunity to set its cooperative flag.
-        thread::sleep(Duration::from_millis(30));
-        assert_eq!(
-            unsafe { libc::flock(journal_lock.as_raw_fd(), libc::LOCK_UN) },
-            0
-        );
-        let output = child.output_within(Duration::from_secs(3));
-        assert_eq!(
-            output.status.code(),
-            Some(130),
-            "stdout={} stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(result["cancelled"], true);
-        assert!(
-            result["targets"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|target| target["request_sent"] == false)
-        );
-        assert!(result["resource_after"].is_null());
-        assert!(result["errors"].as_array().unwrap().is_empty());
-        let before_history = fs::read(store.0.join("journal.jsonl")).unwrap();
-        let history = store.run(&["history", "--json"]);
-        assert!(history.status.success());
-        let history: Value = serde_json::from_slice(&history.stdout).unwrap();
-        assert_eq!(history["replay_enabled"], false);
-        assert_eq!(history["records"][0]["status"], "cancelled");
-        assert_eq!(history["records"][0]["result"]["run_id"], result["run_id"]);
-        assert_eq!(history["records"].as_array().unwrap().len(), 2);
-        assert_eq!(
-            fs::read(store.0.join("journal.jsonl")).unwrap(),
-            before_history
-        );
-        let retained: Vec<Value> = String::from_utf8(before_history)
-            .unwrap()
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        assert_eq!(
-            retained.len(),
-            4,
-            "both zero-target runs have start and finish only"
-        );
-        assert!(retained.iter().all(|row| {
-            row["event"] == "cleanup_started" || row["event"] == "cleanup_finished"
-        }));
-        assert_eq!(
-            unsafe { libc::flock(lane.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
-            0,
-            "cancelled batch must release its execution lane"
-        );
-        assert_eq!(unsafe { libc::flock(lane.as_raw_fd(), libc::LOCK_UN) }, 0);
-        assert!(!store.0.join("state.json").exists());
-    }
-
-    #[test]
-    fn cancelled_batch_when_started_record_lock_times_out_reports_cancelled_error() {
-        let store = IsolatedStore::new();
-        let initialized = store.run(&["clean", "--yes", "--json"]);
-        assert!(
-            initialized.status.success(),
-            "{}",
-            String::from_utf8_lossy(&initialized.stderr)
-        );
-        let before = fs::read(store.0.join("journal.jsonl")).unwrap();
-        let journal_lock = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(store.0.join("journal.lock"))
-            .unwrap();
-        assert_eq!(
-            unsafe { libc::flock(journal_lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
-            0
-        );
-        let lane = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(store.0.join("execution.lock"))
-            .unwrap();
-        let mut child = OwnedBatch::spawn(&store);
-        child.cancel_while_lane_owned(&lane);
-        // Keep the journal lock held through the entire 250 ms budget. There
-        // cannot be a durable started record or a fabricated finished result.
-        let output = child.output_within(Duration::from_secs(3));
-        assert_eq!(
-            output.status.code(),
-            Some(130),
-            "stdout={} stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let error: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(error["error"]["code"], "cancelled");
-        assert!(
-            error["error"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("journal.lock")
-        );
-        assert!(error.get("run_id").is_none());
-        assert!(error.get("targets").is_none());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("Command cancelled"));
-        assert_eq!(fs::read(store.0.join("journal.jsonl")).unwrap(), before);
-        assert_eq!(
-            unsafe { libc::flock(journal_lock.as_raw_fd(), libc::LOCK_UN) },
-            0
-        );
-        let history = store.run(&["history", "--json"]);
-        assert!(history.status.success());
-        let history: Value = serde_json::from_slice(&history.stdout).unwrap();
-        assert_eq!(history["replay_enabled"], false);
-        assert_eq!(history["records"].as_array().unwrap().len(), 1);
-        assert_eq!(history["records"][0]["status"], "finished");
-        assert_eq!(fs::read(store.0.join("journal.jsonl")).unwrap(), before);
-        assert_eq!(
-            unsafe { libc::flock(lane.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
-            0,
-            "a cancelled initialization error must release its execution lane"
-        );
-        assert_eq!(unsafe { libc::flock(lane.as_raw_fd(), libc::LOCK_UN) }, 0);
-        assert!(!store.0.join("state.json").exists());
-    }
-
-    #[test]
-    fn incomplete_history_is_unknown_and_corrupt_history_is_not_hidden_by_limit() {
-        let store = IsolatedStore::new();
-        Store::at(store.0.clone())
-            .append_record(
-                "target_request_prepared",
-                serde_json::json!({"run_id":"test-run"}),
-            )
-            .unwrap();
-        let before = fs::read(store.0.join("journal.jsonl")).unwrap();
-        let history = store.run(&["history", "--json"]);
-        assert!(history.status.success());
-        let history: Value = serde_json::from_slice(&history.stdout).unwrap();
-        assert_eq!(history["records"][0]["status"], "unfinished");
-        assert!(history["records"][0]["result"].is_null());
-        assert_eq!(fs::read(store.0.join("journal.jsonl")).unwrap(), before);
-        store.write("journal.jsonl", "{broken\n");
-        let history = store.run(&["history", "--json", "--limit", "0"]);
-        assert_eq!(history.status.code(), Some(1));
-        assert_eq!(
-            fs::read_to_string(store.0.join("journal.jsonl")).unwrap(),
-            "{broken\n"
-        );
     }
 }
 
@@ -894,4 +576,11 @@ fn cancelled_json_watch_exits_even_when_its_pipe_is_not_read() {
     let _ = child.kill();
     let _ = child.wait();
     panic!("cancelled watch remained blocked on its private output pipe");
+}
+
+#[test]
+fn removed_execution_and_history_are_rejected() {
+    for args in [["clean", "--yes"].as_slice(), ["history"].as_slice()] {
+        assert_eq!(bree(args).status.code(), Some(2));
+    }
 }

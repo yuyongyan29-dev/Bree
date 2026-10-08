@@ -41,7 +41,7 @@ def cpu_seconds(value):
 
 def page_state(text):
     home = ("Memory pressure:" in text and "3. Memory" in text
-            and "4. History" in text and "Enter Open" in text)
+            and "Enter Open" in text)
     resources = ("bree Memory" in text and "/ Search names, Bundle ID or exact PID" in text
                  and "Esc Home" in text and "refresh" in text and not home)
     sample = SAMPLE.search(text)
@@ -101,7 +101,7 @@ def private_file(path, mode):
     return os.fdopen(fd, mode)
 
 
-class Session:
+class PtyRun:
     def __init__(self, name, command, duration, output, env):
         self.name, self.duration = name, duration
         self.master = self.slave = self.child = self.raw = self.events = None
@@ -318,7 +318,7 @@ def observe(args, output, env):
                                         ("resources", [str(binary)], args.resources_seconds),
                                         ("watch", [str(binary), "watch"], args.watch_seconds)):
             try:
-                sessions.append(Session(name, command, duration, output, env))
+                sessions.append(PtyRun(name, command, duration, output, env))
             except Exception as failure:
                 report[name] = {"status": "failed", "error": str(failure),
                                 "command": command, "requested_duration_seconds": duration}

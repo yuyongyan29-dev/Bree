@@ -22,11 +22,11 @@ Maintainers review reports and coordinate fixes and disclosure on a best-effort 
 - Bree inspects memory locally on the Mac. Resource collection does not contact network services or send process data elsewhere. Downloading installation files and updates requires internet access.
 - Default `list` and `watch` exports omit executable and application paths. Explicit `inspect` output can contain paths with the home directory replaced by `~`, and can still reveal project names. Review output before sharing it.
 - Bree does not collect or record full process command lines, environment variables, prompts, or chat content. Application and process names can still appear in output.
-- Application quitting is disabled in the current alpha. Allow rules, `--yes`, and environment variables cannot enable it. Bree does not force-quit applications or perform automatic background cleanup.
-- Rules, previews, and session summaries can write local state; `--dry-run` means no quit requests, not no disk writes. Ordinary viewing, `history`, and `doctor` do not create data files. See the [user guide](docs/cli.md) for data locations, permissions, and retention.
+- Bree does not stop applications. Rules and previews cannot enable application quitting, force quitting, or automatic background cleanup.
+- Rules and preview summaries can write local state; `--dry-run` means no quit requests, not no disk writes. Ordinary viewing and `doctor` do not create data files. See the [user guide](docs/cli.md) for data locations, permissions, and retention.
 
 ## 中文说明
 
 当前只对 `0.3.0-alpha` 线的最新发行版尽力提供安全修复，旧版不再维护。请通过仓库 Security → Advisories → **Report a vulnerability** [私下报告](https://github.com/yuyongyan29-dev/Bree/security/advisories/new)，不要公开开 Issue 或发布漏洞细节。报告前移除密钥、环境变量、个人路径等隐私信息；不承诺具体响应或修复时限。
 
-Bree 在本机采集内存信息，不联网采集；安装和升级需联网。默认 `list`／`watch` 导出省略路径，`inspect` 仍可能显示脱敏路径与项目名。应用退出能力保持关闭；预演不发送退出请求，但会写入本地摘要。
+Bree 在本机采集内存信息，不联网采集；安装和升级需联网。默认 `list`／`watch` 导出省略路径，`inspect` 仍可能显示脱敏路径与项目名。Bree 不会结束应用；预演不发送退出请求，但会写入本地摘要。

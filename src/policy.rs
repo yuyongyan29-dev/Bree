@@ -216,7 +216,7 @@ fn scoped_leader<'a>(
         return Err("The group ID conflicts or the group has no instances.".into());
     }
     if group.category != Category::Application {
-        return Err("Only reliably identified ordinary main apps can have A1 installation rules; this object remains read-only.".into());
+        return Err("Only reliably identified ordinary main apps can have installation rules; this object remains read-only.".into());
     }
     let mut members = Vec::with_capacity(group.process_ids.len());
     let mut ids = HashSet::new();
@@ -313,7 +313,6 @@ pub fn scope_for_group(snapshot: &Snapshot, group_id: &str) -> Result<AppScope, 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PolicyContext {
     pub state_valid: bool,
-    pub a1_enabled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -437,30 +436,11 @@ pub fn evaluate(snapshot: &Snapshot, state: &PolicyState, context: &PolicyContex
             }
             if !allowed {
                 entry.disposition = Disposition::Pending;
-                entry
-                    .reasons
-                    .push("The current ordinary main app has reliable installation and instance evidence, but no user allow rule.".into());
-                entry
-                    .reasons
-                    .push("Needs review only invites explicit installation rules; it does not mean the app is unnecessary or may be quit.".into());
-                if !context.a1_enabled || !leader.quit_supported {
-                    entry
-                        .reasons
-                        .push("Normal termination is not enabled; this is a dry run, and no termination requests are sent.".into());
-                }
-            } else if !context.a1_enabled || !leader.quit_supported {
-                entry
-                    .reasons
-                    .push("A user allow rule matches, but normal termination is unverified or disabled; skipped for protection.".into());
+                entry.reasons.push("The current ordinary main app has reliable installation and instance evidence, but no user allow rule.".into());
+                entry.reasons.push("Needs review only invites explicit installation rules; it does not mean the app is unnecessary or may be quit.".into());
+                entry.reasons.push("Normal termination is not available; this is a dry run, and no termination requests are sent.".into());
             } else {
-                entry.disposition = Disposition::Automatic;
-                entry.reasons.push(
-                    "An exact installation allow rule matches; the current main app instance is valid and in the background, no protection conflicts exist, and A1 is enabled."
-                        .into(),
-                );
-                entry
-                    .reasons
-                    .push("This dry run only freezes the main app instance; it does not include child processes in the group and sends no requests.".into());
+                entry.reasons.push("A user allow rule matches, but normal termination is unavailable; skipped for protection.".into());
             }
             entry
         })
@@ -592,10 +572,7 @@ mod tests {
     }
 
     fn valid_context() -> PolicyContext {
-        PolicyContext {
-            state_valid: true,
-            a1_enabled: false,
-        }
+        PolicyContext { state_valid: true }
     }
 
     fn add(state: &PolicyState, action: RuleAction, scope: AppScope) -> PolicyState {
@@ -649,14 +626,7 @@ mod tests {
                 .activation_policy = policy;
             snapshot.processes[0].quit_supported = true;
             assert!(scope_for_group(&snapshot, &snapshot.groups[0].id).is_err());
-            let plan = evaluate(
-                &snapshot,
-                &state,
-                &PolicyContext {
-                    state_valid: true,
-                    a1_enabled: true,
-                },
-            );
+            let plan = evaluate(&snapshot, &state, &PolicyContext { state_valid: true });
             assert_eq!(plan.protected_count, 1, "{policy:?}");
             assert_eq!(plan.pending_count, 0);
             assert!(plan.entries[0].matched_rule_ids.is_empty());
@@ -672,13 +642,10 @@ mod tests {
             evaluate(&snapshot, &state, &valid_context()).protected_count,
             1
         );
-        let enabled = PolicyContext {
-            state_valid: true,
-            a1_enabled: true,
-        };
+        let enabled = PolicyContext { state_valid: true };
         assert_eq!(evaluate(&snapshot, &state, &enabled).automatic_count, 0);
         snapshot.processes[0].quit_supported = true;
-        assert_eq!(evaluate(&snapshot, &state, &enabled).automatic_count, 1);
+        assert_eq!(evaluate(&snapshot, &state, &enabled).automatic_count, 0);
         let protected = add(&state, RuleAction::Protect, state.rules[0].scope.clone());
         let plan = evaluate(&snapshot, &protected, &enabled);
         assert_eq!(plan.protected_count, 1);
@@ -695,12 +662,9 @@ mod tests {
     fn frontend_change_and_hard_protection_reclassify_allowed_leader() {
         let mut snapshot = application_snapshot();
         let state = allowed(&snapshot);
-        let enabled = PolicyContext {
-            state_valid: true,
-            a1_enabled: true,
-        };
+        let enabled = PolicyContext { state_valid: true };
         snapshot.processes[0].quit_supported = true;
-        assert_eq!(evaluate(&snapshot, &state, &enabled).automatic_count, 1);
+        assert_eq!(evaluate(&snapshot, &state, &enabled).automatic_count, 0);
         snapshot.processes[0]
             .attribution
             .application
@@ -733,14 +697,7 @@ mod tests {
         snapshot.processes[0].executable_path =
             Some("/Users/example/Example.app/Contents/MacOS/Example".into());
         snapshot.processes[0].quit_supported = true;
-        let plan = evaluate(
-            &snapshot,
-            &state,
-            &PolicyContext {
-                state_valid: true,
-                a1_enabled: true,
-            },
-        );
+        let plan = evaluate(&snapshot, &state, &PolicyContext { state_valid: true });
         assert_eq!(plan.pending_count, 1);
         assert!(plan.entries[0].matched_rule_ids.is_empty());
     }
@@ -779,10 +736,7 @@ mod tests {
     fn malformed_rules_and_failed_state_loading_fail_closed() {
         let snapshot = application_snapshot();
         let state = allowed(&snapshot);
-        let failed_load = PolicyContext {
-            state_valid: false,
-            a1_enabled: true,
-        };
+        let failed_load = PolicyContext { state_valid: false };
         assert_eq!(evaluate(&snapshot, &state, &failed_load).protected_count, 1);
         let mut invalid = state.clone();
         invalid.rules[0].scope.bundle_path = "/Applications/*.app".into();
@@ -813,12 +767,9 @@ mod tests {
         snapshot.groups[0].process_ids.push(helper.id.clone());
         snapshot.processes.push(helper);
         snapshot.processes[0].quit_supported = true;
-        let context = PolicyContext {
-            state_valid: true,
-            a1_enabled: true,
-        };
+        let context = PolicyContext { state_valid: true };
         let plan = evaluate(&snapshot, &state, &context);
-        assert_eq!(plan.automatic_count, 1);
+        assert_eq!(plan.automatic_count, 0);
         assert_eq!(plan.entries[0].target_identity.as_ref().unwrap().pid, 42);
         assert_eq!(snapshot.groups[0].process_ids.len(), 2);
         snapshot.processes[1]
@@ -900,11 +851,8 @@ mod tests {
         let mut state = add(&allow, RuleAction::Protect, allow.rules[0].scope.clone());
         state.rules[1].enabled = false;
         snapshot.processes[0].quit_supported = true;
-        let context = PolicyContext {
-            state_valid: true,
-            a1_enabled: true,
-        };
-        assert_eq!(evaluate(&snapshot, &state, &context).automatic_count, 1);
+        let context = PolicyContext { state_valid: true };
+        assert_eq!(evaluate(&snapshot, &state, &context).automatic_count, 0);
         snapshot.processes[0]
             .protection_reasons
             .push("Future protection condition".into());
@@ -951,10 +899,7 @@ mod tests {
         let plan = evaluate(
             &snapshot,
             &PolicyState::default(),
-            &PolicyContext {
-                state_valid: true,
-                a1_enabled: true,
-            },
+            &PolicyContext { state_valid: true },
         );
         assert_eq!(plan.protected_count, 1);
         assert!(

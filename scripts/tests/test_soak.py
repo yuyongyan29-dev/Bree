@@ -16,7 +16,7 @@ SOAK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SOAK)
 
 HOME = ("Memory pressure: Normal\nUsed 1 GiB / Total 2 GiB\n"
-        "UTC 01:02:03 · 10 ms\n3. Memory\n4. History\nEnter Open")
+        "UTC 01:02:03 · 10 ms\n3. Memory\nEnter Open")
 RESOURCES = ("bree Memory\nSample UTC 01:02:03 · 10 ms\n"
              "/ Search names, Bundle ID or exact PID\nEsc Home\nMemory · 2.0s refresh")
 FAKE = r'''#!INTERPRETER
@@ -34,7 +34,7 @@ def draw():
     stamp='01:02:%02d' % (number % 60)
     number+=1
     if page=='home':
-        text='Memory pressure: Normal\nUTC '+stamp+' · 10 ms\n3. Memory\n4. History\nEnter Open'
+        text='Memory pressure: Normal\nUTC '+stamp+' · 10 ms\n3. Memory\nEnter Open'
     else:
         text='bree Memory\nSample UTC '+stamp+' · 10 ms\n/ Search names, Bundle ID or exact PID\nEsc Home\nMemory · 2.0s refresh'
     os.write(1,('\x1b[2J\x1b[H'+text.replace('\n','\r\n')).encode())
@@ -81,7 +81,7 @@ class SoakTests(unittest.TestCase):
         for position in range(0, len(data), 3):
             screen.feed(data[position:position + 3])
         self.assertEqual(SOAK.page_state(screen.text())["page"], "resources")
-        self.assertNotIn("4. History", screen.text())
+        self.assertNotIn("3. Memory", screen.text())
 
     def test_nearest_rank_p95_and_bounded_growth_evidence(self):
         rows = [{"elapsed_seconds": n * 10, "rss_bytes": n + 1, "cpu_seconds": n * .1}

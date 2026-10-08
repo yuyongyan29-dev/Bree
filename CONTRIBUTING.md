@@ -2,7 +2,7 @@
 
 [English](CONTRIBUTING.md) · [中文](CONTRIBUTING.zh-CN.md)
 
-Contributions are welcome: report problems, improve documentation, submit fixes, or discuss features. Bree is a free macOS CLI for local memory inspection and explanation. Its terminal interface and direct commands share collection, rule, and session logic.
+Contributions are welcome: report problems, improve documentation, submit fixes, or discuss features. Bree is a free macOS CLI for local memory inspection and explanation. Its terminal interface and direct commands share collection, rule, and preview logic.
 
 ## Reporting problems
 
@@ -34,10 +34,10 @@ The toolchain is pinned in `rust-toolchain.toml` and dependencies in `Cargo.lock
 
 | Directory | Contents |
 |---|---|
-| `src/` | CLI, TUI, collection, policy, storage, and processing sessions |
+| `src/` | CLI, TUI, collection, policy, storage, and previews |
 | `src/platform/` | macOS adapters and capability information for other platforms |
 | `tests/` | Command behavior, live collection, and terminal tests |
-| `scripts/` | Performance, terminal, and isolated application quit experiments |
+| `scripts/` | Performance and terminal verification |
 | `distribution/` | curl installer, release preparation, and installer tests |
 | `docs/` | User and installation guides |
 
@@ -73,15 +73,15 @@ python3 scripts/stability-check.py \
   --output "$PWD/.artifacts/stability/run-001"
 ```
 
-The runner rebuilds the release binary and runs the existing benchmark, terminal, theme, and signal checks, plus history reads and extended Home and Resources observations. It holds the exclusive lock during live measurements until its child processes are reaped. Home stays idle for 5 minutes; the explicitly opened TUI Resources page and a separate watch session each run for 10 minutes. A roughly 10 MiB history fixture stays in the run's output directory and is used only for history reads. The summary preserves the source manifest, binary SHA, commands, exit codes, and raw logs, distinguishing `failed`, `not-run`, and `unknown`. Raw logs can contain local application names and must not be committed. Do not run measurements alongside builds, other performance sampling, or native UI experiments.
+The runner rebuilds the release binary and runs the existing benchmark, terminal, theme, and signal checks, plus extended Home and Resources observations. It holds the exclusive lock during live measurements until its child processes are reaped. Home stays idle for 5 minutes; the explicitly opened TUI Resources page and a separate watch session each run for 10 minutes. The summary preserves the source manifest, binary SHA, commands, exit codes, and raw logs, distinguishing `failed`, `not-run`, and `unknown`. Raw logs can contain local application names and must not be committed. Do not run measurements alongside builds, other performance sampling, or native UI experiments.
 
-Run script regression tests with `python3 -m unittest discover -s scripts/tests`; CI runs the same command. These tests use simulated child processes and temporary directories, without a prebuilt `target/release/bree`, developer terminal settings, or real user data. PTY checks do not replace visual checks in a real terminal for light and dark themes, fonts, small windows, or resizing. The runner marks that check as `not-run`; record actual visual checks separately. Measurements from one machine describe only that build on that system. They do not extend release compatibility claims or establish A1 application quitting capability.
+Run script regression tests with `python3 -m unittest discover -s scripts/tests`; CI runs the same command. These tests use simulated child processes and temporary directories, without a prebuilt `target/release/bree`, developer terminal settings, or real user data. PTY checks do not replace visual checks in a real terminal for light and dark themes, fonts, small windows, or resizing. The runner marks that check as `not-run`; record actual visual checks separately. Measurements from one machine describe only that build on that system. They do not extend release compatibility claims.
 
 Keep builds and local experiment output in the ignored `target/` or `.artifacts/` directories. Do not commit personal paths or raw process snapshots.
 
 ## Preparing a signed release
 
-The published Alpha remains ad-hoc signed and unnotarized. The following maintainer tools prepare future releases; adding them does not change the published assets or installation guarantees. A1 application quitting remains disabled.
+The published Alpha remains ad-hoc signed and unnotarized. The following maintainer tools prepare future releases; adding them does not change the published assets or installation guarantees.
 
 With concurrent worktrees, take the same absolute `fcntl.flock` exclusive lock used by the stability runner **before** any build, packaging command, or live measurement, and hold it until its child processes exit. Packaging does not acquire that shared lock itself; its output-directory lock only prevents two writers from packaging into the same directory.
 
@@ -118,11 +118,10 @@ Packaging, notarization submission, publishing a GitHub Release, updating the ta
 
 - Keep missing metrics as `null` with a reason; do not substitute zero. Use a consistent process memory metric and do not count groups twice.
 - Object IDs describe the current instance for inspection; they are not stopping credentials that can be reused across launches. Protect rules take priority over allow rules.
-- Actual A1 normal application quitting is hard-disabled. Fake backend tests do not establish native capability. Do not add a force-quit fallback.
-- Changes to quitting capability must provide evidence for exact instance control, foreground protection, document saving, cancellation, logging failures, and restart handling. Objects without reliable capability remain read-only.
+- Bree does not stop applications. Rules and previews do not enable quitting, force quitting, or background cleanup.
 - JSON stdout contains only results; diagnostics go to stderr. Preserve the declared schemas and validity fields.
 
-See the [user guide](docs/cli.md) for metric definitions and capability scope. Isolated quit experiments must target only fixtures created for the experiment, never existing user applications as implicit test targets.
+See the [user guide](docs/cli.md) for metric definitions and capability scope.
 
 ## Submitting a pull request
 

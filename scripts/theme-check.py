@@ -82,7 +82,7 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
                   ("Search: bree-private-pty-no-match", b"\x1b"), ("/ Search names", b"\x1b"),
                   ("Memory pressure:", b"1\r"), ("Preview · No quit requests", b"\x1b"),
                   ("Memory pressure:", b"p"), ("Preview · No quit requests", b"\x1b"),
-                  ("Memory pressure:", b"4\r"), ("History · Recent runs", b"q")]
+                  ("Memory pressure:", b"q")]
         if cancel_in_editor:
             stages = [("Memory pressure:", b"3\r"), ("bree Memory", b"/"),
                       ("Enter Apply", b"\x03")]
@@ -111,7 +111,7 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
                         home = screen.lines()
                         home_backgrounds = screen.colored_background_count()
                         home_color_cells = list(screen.color_cells.values())
-                        for label in ("1. Preview", "2. Needs review", "> 3. Memory", "4. History", "S Settings", "Q Quit"):
+                        for label in ("1. Preview", "2. Needs review", "> 3. Memory", "S Settings", "Q Quit"):
                             if label not in screen.text():
                                 raise RuntimeError(f"home entry clipped: {label}\n{screen.text()}")
                         if "-.-" in screen.text() or "Rules and preview" in screen.text():
@@ -120,7 +120,7 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
                             line = next(line for line in home if label in line)
                             if line.index(label) != 2:
                                 raise RuntimeError(f"home content was shifted by the mascot: {line}")
-                        menu_row = next(i for i, line in enumerate(home) if "4. History" in line)
+                        menu_row = next(i for i, line in enumerate(home) if "3. Memory" in line)
                         footer_row = next(i for i, line in enumerate(home) if "↑↓ /" in line)
                         if footer_row - menu_row > 2:
                             raise RuntimeError("home shortcuts are too far below the menu")
@@ -173,7 +173,7 @@ def session(colorfgbg, columns, rows, cancel_in_editor=False,
                     "brand": "mascot" if mascot else "wordmark" if expanded else "compact",
                     "default_background_outside_sprite": True, "no_reverse_video": True,
                     "pages_opened": (["Home"] if resize_home else ["Home", "Memory"]
-                                     if cancel_in_editor else ["Home", "Settings", "Memory", "Preview", "History"]),
+                                     if cancel_in_editor else ["Home", "Settings", "Memory", "Preview"]),
                     "critical_entries_visible": True, "home_lines": home,
                     "home_color_cells": home_color_cells,
                     "exit_code": child.returncode, "terminal_restored": True,

@@ -26,7 +26,7 @@
 
 Bree 把系统内存压力、应用与进程占用放进一个键盘操作的终端界面。查看谁占用了内存，追到每个对象的归属和指标依据，也能用直接命令与 JSON 持续观察。
 
-**当前为 `0.3.0-alpha.7`：已验证原生 Apple Silicon、macOS 27.0.1，其他系统组合尚待验证。应用正常退出功能未启用，本版本不会结束应用；规则与预演说明每个应用的分类理由，`clean` 命令只记录预演和零请求会话。**
+**当前为 `0.3.0-alpha.7`：已验证原生 Apple Silicon、macOS 27.0.1，其他系统组合尚待验证。Bree 不会结束应用；规则与预演说明每个应用的分类理由，`clean --dry-run` 只记录预演。**
 
 <!-- screenshot: TUI Home and Resources -->
 
@@ -72,7 +72,7 @@ bree
 | 哪个应用或进程占用了内存？ | 按有证据的应用归属分组，查看进程详情，按名称、bundle ID 或 PID 搜索 |
 | 进程属于哪个 AI／开发工具？ | 按[已说明的可执行文件安装布局](docs/cli.md#development-labels)标注 ChatGPT.app 内置的 Codex CLI 与原生安装的 Claude Code，不锁定版本号；标签只解释安装来源，不代表任务已完成或内存可以安全回收 |
 | 占用是否还在变化？ | 前台持续观察，以及文本、JSON／JSONL 输出 |
-| 某个对象为什么被保护或跳过？ | 允许／保护规则、分类理由、只读预演与处理历史 |
+| 某个对象为什么被保护或跳过？ | 允许／保护规则、分类理由与只读预演 |
 
 未知或无权限的数据明确标记，不填成零。
 
@@ -91,7 +91,6 @@ bree inspect '<对象 ID>'     # 使用 list 返回的 ID 查看详情
 bree watch                   # 前台持续观察
 bree doctor                  # 检查能力与数据可用性
 bree clean --dry-run --json   # 只读预演
-bree history --json           # 读取处理历史
 bree license                  # 查看 GPL-3.0 许可
 ```
 

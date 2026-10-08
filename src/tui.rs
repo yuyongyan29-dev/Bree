@@ -1,4 +1,4 @@
-//! Inspection, exact installation rules, preview and time-driven cleanup UI.
+//! Inspection, exact installation rules, and preview UI.
 //! A snapshot worker never owns or changes terminal state.
 
 use std::io::{self, IsTerminal, Stdout};
@@ -26,10 +26,8 @@ use ratatui::{
 
 use crate::attribution::label_process;
 use crate::brand::{self, ColorDepth};
-use crate::cleanup::{self, CleanupMode, CleanupResult, Session};
 use crate::collect::{Collector, pump_platform_events};
-use crate::history::{self, HistoryItem};
-use crate::model::{Category, OccupancyGroup, ProcessIdentity, ProcessInfo, Snapshot, safe_text};
+use crate::model::{Category, OccupancyGroup, ProcessInfo, Snapshot, safe_text};
 use crate::output::{metric_bytes, missing_text, pressure_text};
 use crate::policy::{
     AppScope, CleanupPlan, Disposition, PlanEntry, PolicyContext, PolicyState, RuleAction,
@@ -167,10 +165,6 @@ enum Page {
     Settings,
     RuleDetail(String),
     Preview,
-    Executing,
-    Results,
-    History,
-    HistoryDetail(String),
 }
 
 enum RuleConfirmation {
@@ -183,13 +177,6 @@ enum RuleConfirmation {
         id: String,
         action: RuleAction,
         scope: AppScope,
-    },
-    Exit {
-        group_id: String,
-        name: String,
-        scope: AppScope,
-        identity: ProcessIdentity,
-        snapshot: Box<Snapshot>,
     },
 }
 
@@ -269,12 +256,6 @@ struct App {
     rules: ListState,
     confirmation: Option<RuleConfirmation>,
     confirmation_scroll: u16,
-    cleanup: Option<Session>,
-    cleanup_result: Option<CleanupResult>,
-    history: Vec<HistoryItem>,
-    history_error: Option<String>,
-    history_selection: ListState,
-    start_cleanup_after_sample: bool,
 }
 
 impl App {
@@ -314,12 +295,6 @@ impl App {
             rules: ListState::default(),
             confirmation: None,
             confirmation_scroll: 0,
-            cleanup: None,
-            cleanup_result: None,
-            history: Vec::new(),
-            history_error: None,
-            history_selection: ListState::default(),
-            start_cleanup_after_sample: false,
         }
     }
 
@@ -366,7 +341,6 @@ impl App {
                 &self.policy,
                 &PolicyContext {
                     state_valid: self.policy_error.is_none(),
-                    a1_enabled: cleanup::enabled(),
                 },
             )
         });
@@ -445,193 +419,7 @@ impl App {
         }
     }
 
-    fn begin_exit(&mut self, id: &str) {
-        if !cleanup::enabled() {
-            self.notice =
-                Some("Normal quit is disabled; read-only mode. An Allow rule does not enable this capability.".into());
-            return;
-        }
-        self.reload_policy();
-        if self.policy_error.is_some() || self.store.is_none() {
-            self.notice = Some(
-                "Rules cannot be read; normal quit is disabled. See Settings for details.".into(),
-            );
-            return;
-        }
-        if let Some(entry) = self.entry(id)
-            && entry.disposition == Disposition::Protected
-        {
-            self.notice = Some(format!(
-                "This object is protected and cannot be asked to quit: {}",
-                entry
-                    .reasons
-                    .iter()
-                    .map(|reason| safe_text(reason))
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            ));
-            return;
-        }
-        let Some(snapshot) = &self.snapshot else {
-            return;
-        };
-        let scope = match scope_for_group(snapshot, id) {
-            Ok(scope) => scope,
-            Err(error) => {
-                self.notice = Some(format!(
-                    "This object does not support normal quit: {}",
-                    safe_text(&error)
-                ));
-                return;
-            }
-        };
-        let Some(entry) = self.entry(id) else {
-            return;
-        };
-        let Some(identity) = &entry.target_identity else {
-            self.notice = Some(
-                "The exact main application instance is missing; no quit request can be sent."
-                    .into(),
-            );
-            return;
-        };
-        self.confirmation = Some(RuleConfirmation::Exit {
-            group_id: id.into(),
-            name: entry.name.clone(),
-            scope,
-            identity: identity.clone(),
-            snapshot: Box::new(snapshot.clone()),
-        });
-        self.confirmation_scroll = 0;
-    }
-
-    fn start_automatic_cleanup(&mut self) {
-        self.start_cleanup_after_sample = false;
-        self.reload_policy();
-        if !cleanup::enabled() {
-            self.notice = Some(
-                "Normal quit is disabled; no automatic targets and no requests sent. P opens a read-only preview."
-                    .into(),
-            );
-            return;
-        }
-        if self.policy_error.is_some() || self.store.is_none() {
-            self.notice =
-                Some("Rules cannot be read; cleanup is disabled. S opens Settings.".into());
-            return;
-        }
-        if self
-            .plan
-            .as_ref()
-            .is_none_or(|plan| plan.automatic_count == 0)
-        {
-            self.notice = Some("No automatic targets; no requests sent. Add an Allow rule in Details, or press P to see the reasons.".into());
-            return;
-        }
-        if let Some(snapshot) = self.snapshot.clone() {
-            self.start_cleanup(snapshot, CleanupMode::Automatic);
-        }
-    }
-
-    fn start_cleanup(&mut self, snapshot: Snapshot, mode: CleanupMode) {
-        let Some(store) = self.store.clone() else {
-            self.notice = Some(
-                "Cleanup not started: history storage unavailable; no quit requests sent.".into(),
-            );
-            return;
-        };
-        match Session::start(store, snapshot, mode) {
-            Ok(session) => {
-                self.cleanup = Some(session);
-                self.cleanup_result = None;
-                self.preview_refresh_queued = false;
-                self.page = Page::Executing;
-                self.detail_scroll = 0;
-            }
-            Err(error) => {
-                self.notice = Some(format!(
-                    "Cleanup not started: {}; no other instance was included.",
-                    safe_text(&error)
-                ))
-            }
-        }
-    }
-
-    fn finish_cleanup(&mut self) -> bool {
-        let result = self
-            .cleanup
-            .as_ref()
-            .and_then(|session| session.result())
-            .cloned();
-        if let Some(result) = result {
-            self.cleanup_result = Some(result);
-            self.cleanup = None;
-            self.page = Page::Results;
-            self.detail_scroll = 0;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn advance_cleanup(&mut self) -> bool {
-        let Some(session) = self.cleanup.as_mut() else {
-            return false;
-        };
-        let before = session.progress().to_owned();
-        session.tick();
-        let changed = session.progress() != before;
-        self.finish_cleanup() || changed
-    }
-
-    fn cancel_cleanup(&mut self) {
-        if let Some(session) = &mut self.cleanup {
-            session.cancel();
-        }
-        self.finish_cleanup();
-    }
-
-    fn open_history(&mut self) {
-        self.start_cleanup_after_sample = false;
-        self.page = Page::History;
-        self.detail_scroll = 0;
-        self.reload_history();
-    }
-
-    fn reload_history(&mut self) {
-        let selected = self
-            .history_selection
-            .selected()
-            .and_then(|index| self.history.get(index))
-            .map(|item| item.run_id.clone());
-        let Some(store) = &self.store else {
-            self.history_error = Some("History storage unavailable".into());
-            return;
-        };
-        match history::load(store, 50) {
-            Ok(items) => {
-                self.history = items;
-                self.history_error = None;
-            }
-            Err(error) => self.history_error = Some(safe_text(&error)),
-        }
-        let index = selected
-            .as_ref()
-            .and_then(|id| self.history.iter().position(|item| &item.run_id == id))
-            .or_else(|| (!self.history.is_empty()).then_some(0));
-        self.history_selection.select(index);
-    }
-
     fn confirm_change(&mut self) {
-        if matches!(self.confirmation, Some(RuleConfirmation::Exit { .. })) {
-            if let Some(RuleConfirmation::Exit {
-                group_id, snapshot, ..
-            }) = self.confirmation.take()
-            {
-                self.start_cleanup(*snapshot, CleanupMode::Manual { group_id });
-            }
-            return;
-        }
         self.reload_policy();
         if self.policy_error.is_some() {
             self.confirmation = None;
@@ -647,7 +435,6 @@ impl App {
         let change = match confirmation {
             RuleConfirmation::Add { action, scope, .. } => RuleChange::Add { action, scope },
             RuleConfirmation::Remove { id, .. } => RuleChange::Remove { id },
-            RuleConfirmation::Exit { .. } => unreachable!(),
         };
         let Some(store) = &self.store else {
             return;
@@ -671,7 +458,6 @@ impl App {
     }
 
     fn open_preview(&mut self) {
-        self.start_cleanup_after_sample = false;
         self.page = Page::Preview;
         self.detail_scroll = 0;
         self.preview_plan = None;
@@ -687,10 +473,7 @@ impl App {
             evaluate(
                 &snapshot,
                 &self.policy,
-                &PolicyContext {
-                    state_valid: false,
-                    a1_enabled: false,
-                },
+                &PolicyContext { state_valid: false },
             )
         };
         if self.policy_error.is_some() {
@@ -714,10 +497,7 @@ impl App {
                 self.preview_plan = Some(evaluate(
                     &snapshot,
                     &self.policy,
-                    &PolicyContext {
-                        state_valid: false,
-                        a1_enabled: false,
-                    },
+                    &PolicyContext { state_valid: false },
                 ));
                 self.notice = Some(format!(
                     "Preview incomplete: {}. No quit requests are sent.",
@@ -827,19 +607,10 @@ impl App {
         self.sampled = Some(Instant::now());
         match result {
             Ok(snapshot) => {
-                // Navigation can retire the command's initial intent. A response
-                // alone never authorizes starting cleanup from another page.
-                if self.page != Page::Home {
-                    self.start_cleanup_after_sample = false;
-                }
-                let clean_snapshot = self.start_cleanup_after_sample.then(|| snapshot.clone());
                 self.snapshot = Some(snapshot);
                 self.error = None;
                 self.evaluate_policy();
-                if let Some(snapshot) = clean_snapshot {
-                    self.start_cleanup_after_sample = false;
-                    self.start_cleanup(snapshot, CleanupMode::Automatic);
-                } else if self.page == Page::Preview
+                if self.page == Page::Preview
                     && self.preview_plan.is_none()
                     && self.preview_error.is_none()
                     && !self.preview_refresh_queued
@@ -850,13 +621,6 @@ impl App {
             }
             Err(error) => {
                 self.error = Some(safe_text(&error));
-                if self.start_cleanup_after_sample {
-                    self.start_cleanup_after_sample = false;
-                    self.notice = Some(format!(
-                        "Cleanup not started: sampling failed: {}; no quit requests sent.",
-                        safe_text(&error)
-                    ));
-                }
                 if self.page == Page::Preview
                     && self.preview_plan.is_none()
                     && !self.preview_refresh_queued
@@ -897,10 +661,6 @@ impl App {
             return InputResult::Continue;
         }
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            if self.cleanup.is_some() {
-                self.cancel_cleanup();
-                return InputResult::Continue;
-            }
             return InputResult::Quit(true);
         }
         // Editor text must be handled before application shortcuts such as Q, R or S.
@@ -909,14 +669,7 @@ impl App {
             return InputResult::Continue;
         }
         if key.code == KeyCode::Char('q') || key.code == KeyCode::Char('Q') {
-            self.cancel_cleanup();
             return InputResult::Quit(false);
-        }
-        if self.cleanup.is_some() {
-            if key.code == KeyCode::Esc {
-                self.cancel_cleanup();
-            }
-            return InputResult::Continue;
         }
         if self.notice.is_some() {
             if matches!(key.code, KeyCode::Esc | KeyCode::Enter) {
@@ -944,16 +697,8 @@ impl App {
             }
             return InputResult::Continue;
         }
-        let previous_page = self.page.clone();
         match key.code {
             KeyCode::Char('r' | 'R') => {
-                if self.page == Page::History || matches!(self.page, Page::HistoryDetail(_)) {
-                    self.reload_history();
-                    return InputResult::Continue;
-                }
-                if self.page == Page::Results {
-                    return InputResult::Continue;
-                }
                 self.reload_policy();
                 if self.page == Page::Settings || matches!(self.page, Page::RuleDetail(_)) {
                     return InputResult::Continue;
@@ -969,14 +714,9 @@ impl App {
                 return InputResult::Refresh;
             }
             KeyCode::Char('s' | 'S') => {
-                self.start_cleanup_after_sample = false;
                 self.reload_policy();
                 self.page = Page::Settings;
                 self.detail_scroll = 0;
-            }
-            KeyCode::Esc if self.start_cleanup_after_sample => {
-                self.start_cleanup_after_sample = false;
-                self.notice = Some("Cleanup preparation cancelled; no quit requests sent.".into());
             }
             KeyCode::Esc => match self.page {
                 Page::Detail(_) => {
@@ -988,15 +728,7 @@ impl App {
                     self.reconcile_selection();
                 }
                 Page::Resources => self.page = Page::Home,
-                Page::Settings
-                | Page::Preview
-                | Page::Results
-                | Page::History
-                | Page::Executing => self.page = Page::Home,
-                Page::HistoryDetail(_) => {
-                    self.page = Page::History;
-                    self.detail_scroll = 0;
-                }
+                Page::Settings | Page::Preview => self.page = Page::Home,
                 Page::RuleDetail(_) => {
                     self.page = Page::Settings;
                     self.detail_scroll = 0;
@@ -1008,16 +740,10 @@ impl App {
                     let mut index = self.menu.selected().unwrap_or(2);
                     match key.code {
                         KeyCode::Up | KeyCode::Char('k') => index = index.saturating_sub(1),
-                        KeyCode::Down | KeyCode::Char('j') => index = (index + 1).min(3),
-                        KeyCode::Char(value @ '1'..='4') => index = (value as u8 - b'1') as usize,
+                        KeyCode::Down | KeyCode::Char('j') => index = (index + 1).min(2),
+                        KeyCode::Char(value @ '1'..='3') => index = (value as u8 - b'1') as usize,
                         KeyCode::Enter => match index {
-                            0 => {
-                                if cleanup::enabled() {
-                                    self.start_automatic_cleanup();
-                                } else {
-                                    self.open_preview();
-                                }
-                            }
+                            0 => self.open_preview(),
                             1 => {
                                 self.set_filter(Filter::Pending);
                                 self.page = Page::Resources;
@@ -1026,7 +752,7 @@ impl App {
                                 self.set_filter(Filter::All);
                                 self.page = Page::Resources;
                             }
-                            _ => self.open_history(),
+                            _ => {}
                         },
                         KeyCode::Char('p' | 'P') => self.open_preview(),
                         _ => {}
@@ -1066,7 +792,6 @@ impl App {
                 Page::Detail(id) => match key.code {
                     KeyCode::Char('a' | 'A') => self.begin_add(&id.clone(), RuleAction::Allow),
                     KeyCode::Char('p' | 'P') => self.begin_add(&id.clone(), RuleAction::Protect),
-                    KeyCode::Char('e' | 'E') => self.begin_exit(&id.clone()),
                     KeyCode::Up | KeyCode::Char('k') => {
                         self.detail_scroll = self.detail_scroll.saturating_sub(1)
                     }
@@ -1103,60 +828,22 @@ impl App {
                     }
                     _ => {}
                 },
-                Page::History => match key.code {
+                Page::RuleDetail(_) | Page::Preview => match key.code {
+                    KeyCode::Char('d' | 'D') if matches!(self.page, Page::RuleDetail(_)) => {
+                        self.begin_remove()
+                    }
                     KeyCode::Up | KeyCode::Char('k') => {
-                        let index = self
-                            .history_selection
-                            .selected()
-                            .unwrap_or(0)
-                            .saturating_sub(1);
-                        self.history_selection
-                            .select((!self.history.is_empty()).then_some(index));
+                        self.detail_scroll = self.detail_scroll.saturating_sub(1)
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
-                        let index = (self.history_selection.selected().unwrap_or(0) + 1)
-                            .min(self.history.len().saturating_sub(1));
-                        self.history_selection
-                            .select((!self.history.is_empty()).then_some(index));
+                        self.detail_scroll = self.detail_scroll.saturating_add(1)
                     }
-                    KeyCode::Enter => {
-                        if let Some(item) = self
-                            .history_selection
-                            .selected()
-                            .and_then(|index| self.history.get(index))
-                        {
-                            self.page = Page::HistoryDetail(item.run_id.clone());
-                            self.detail_scroll = 0;
-                        }
-                    }
+                    KeyCode::PageUp => self.detail_scroll = self.detail_scroll.saturating_sub(10),
+                    KeyCode::PageDown => self.detail_scroll = self.detail_scroll.saturating_add(10),
+                    KeyCode::Home => self.detail_scroll = 0,
                     _ => {}
                 },
-                Page::RuleDetail(_) | Page::Preview | Page::Results | Page::HistoryDetail(_) => {
-                    match key.code {
-                        KeyCode::Char('d' | 'D') if matches!(self.page, Page::RuleDetail(_)) => {
-                            self.begin_remove()
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            self.detail_scroll = self.detail_scroll.saturating_sub(1)
-                        }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            self.detail_scroll = self.detail_scroll.saturating_add(1)
-                        }
-                        KeyCode::PageUp => {
-                            self.detail_scroll = self.detail_scroll.saturating_sub(10)
-                        }
-                        KeyCode::PageDown => {
-                            self.detail_scroll = self.detail_scroll.saturating_add(10)
-                        }
-                        KeyCode::Home => self.detail_scroll = 0,
-                        _ => {}
-                    }
-                }
-                Page::Executing => {}
             },
-        }
-        if self.page != previous_page {
-            self.start_cleanup_after_sample = false;
         }
         InputResult::Continue
     }
@@ -1203,16 +890,10 @@ fn refresh(app: &mut App, worker: &mut Option<Worker>) -> Result<(), String> {
 /// Enter an interactive UI. Only resources/watch refresh periodically; the home page stays idle.
 /// Returns `true` for raw Ctrl+C and `false` for Q. External signals restore and exit directly.
 pub fn run(watch: bool, interval: Duration) -> Result<bool, String> {
-    run_internal(watch, interval, false)
+    run_internal(watch, interval)
 }
 
-/// An explicit `bree clean` command prepares a session after its first real sample.
-/// The native session owns all action gates; an empty plan produces an honest result.
-pub fn run_clean() -> Result<bool, String> {
-    run_internal(false, Duration::from_secs(2), true)
-}
-
-fn run_internal(watch: bool, interval: Duration, clean: bool) -> Result<bool, String> {
+fn run_internal(watch: bool, interval: Duration) -> Result<bool, String> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(
             "The interactive UI requires a TTY. Use bree status --json or bree list --json.".into(),
@@ -1226,7 +907,6 @@ fn run_internal(watch: bool, interval: Duration, clean: bool) -> Result<bool, St
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))
         .map_err(|error| format!("Cannot create the terminal UI: {error}"))?;
     let mut app = App::new(watch);
-    app.start_cleanup_after_sample = clean;
     app.refresh_interval = interval.max(Duration::from_millis(100));
     // Show the skeleton before native initialization or process enumeration.
     let mut worker = None;
@@ -1246,9 +926,6 @@ fn run_internal(watch: bool, interval: Duration, clean: bool) -> Result<bool, St
     // and retain the original I/O error when one was already observed.
     let teardown = panic::catch_unwind(panic::AssertUnwindSafe(|| drop(terminal)));
     drop(guard);
-    // An event/draw error also stops queued actions. Restore the terminal first;
-    // then durably classify any sent, unverified request without sending more.
-    app.cancel_cleanup();
     drop(worker);
     if teardown.is_err() && result.is_ok() {
         Err("Terminal cursor restoration failed after output disconnected.".into())
@@ -1289,9 +966,6 @@ fn run_loop(
             refresh(app, worker)?;
             redraw = true;
         }
-        if app.advance_cleanup() {
-            redraw = true;
-        }
         if redraw {
             terminal
                 .draw(|frame| render(frame, app))
@@ -1299,9 +973,7 @@ fn run_loop(
             redraw = false;
         }
         // Blocking poll avoids a rendering/animation loop while still receiving worker data.
-        let timeout = if app.cleanup.is_some() {
-            Duration::from_millis(100)
-        } else if app.loading {
+        let timeout = if app.loading {
             Duration::from_millis(50)
         } else if app.page == Page::Resources {
             Duration::from_millis(250)
@@ -1391,11 +1063,7 @@ fn render_settings(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             "{} rules · rev {} · Protect overrides Allow\n{}",
             app.policy.rules.len(),
             app.policy.revision,
-            if cleanup::enabled() {
-                "Saving a rule does not quit the application."
-            } else {
-                "Normal quit is disabled."
-            }
+            "Normal quit is disabled."
         ),
     };
     frame.render_widget(Paragraph::new(status).wrap(Wrap { trim: false }), chunks[1]);
@@ -1494,11 +1162,7 @@ fn render_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             ),
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ));
-        lines.push(Line::from(if cleanup::enabled() {
-            "No quit requests here. Execution rechecks the instance, protection and frontmost state."
-        } else {
-            "Normal quit is disabled. Allow rules affect classification only; zero automatic targets is valid."
-        }));
+        lines.push(Line::from("Normal quit is disabled. Allow rules affect classification only; zero automatic targets is valid."));
         lines.push(Line::from(format!(
             "Plan {} · rule revision {} · created UTC ms {}",
             safe_text(&plan.plan_id),
@@ -1586,296 +1250,6 @@ fn render_preview(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     );
 }
 
-fn result_lines(result: &CleanupResult) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        Line::from(format!(
-            "Run {} · rule revision {}",
-            safe_text(&result.run_id),
-            result.rule_revision
-        )),
-        Line::from(format!("Plan {}", safe_text(&result.plan_id))),
-    ];
-    if result.cancelled {
-        lines.push(Line::styled(
-            "Cancelled. Sent requests cannot be recalled; unverified outcomes remain explicit.",
-            Style::default().fg(ACCENT),
-        ));
-    }
-    lines.push(Line::from(""));
-    lines.push(Line::styled(
-        "Application quit outcomes",
-        Style::default().add_modifier(Modifier::BOLD),
-    ));
-    if result.targets.is_empty() {
-        lines.push(Line::from("No targets; no quit requests sent."));
-    }
-    for target in &result.targets {
-        lines.push(Line::styled(
-            format!("{} · {}", target.outcome.text(), safe_text(&target.name)),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ));
-        lines.push(Line::from(format!(
-            "{} · observed {} ms",
-            if target.request_sent {
-                "Normal quit request sent"
-            } else {
-                "No request sent"
-            },
-            target.observed_ms
-        )));
-        if let Some(identity) = &target.identity {
-            lines.push(Line::from(format!(
-                "Exact instance {}",
-                safe_text(&identity.object_id())
-            )));
-        }
-        lines.push(Line::from(format!("Reason: {}", safe_text(&target.reason))));
-        lines.push(Line::from(""));
-    }
-    lines.push(Line::styled(
-        "System resource observations",
-        Style::default().add_modifier(Modifier::BOLD),
-    ));
-    lines.push(Line::from(format!(
-        "Before: used {} · pressure {} · compressed {} · swap {}",
-        metric_bytes(&result.resource_before.used_bytes),
-        pressure_text(&result.resource_before.pressure),
-        metric_bytes(&result.resource_before.compressed_bytes),
-        metric_bytes(&result.resource_before.swap_used_bytes)
-    )));
-    if let Some(after) = &result.resource_after {
-        lines.push(Line::from(format!(
-            "After: used {} · pressure {} · compressed {} · swap {}",
-            metric_bytes(&after.used_bytes),
-            pressure_text(&after.pressure),
-            metric_bytes(&after.compressed_bytes),
-            metric_bytes(&after.swap_used_bytes)
-        )));
-    } else {
-        lines.push(Line::from(
-            "After: no resource sample; improvement cannot be assessed.",
-        ));
-    }
-    lines.push(Line::from(safe_text(&result.resource_observation)));
-    lines.push(Line::from(
-        "No improvement is a valid result. System changes are not a guarantee of memory freed by this run.",
-    ));
-    for error in &result.errors {
-        lines.push(Line::styled(
-            format!("History / observation error: {}", safe_text(error)),
-            Style::default().fg(ACCENT),
-        ));
-    }
-    lines
-}
-
-fn render_executing(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let chunks = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(4),
-        Constraint::Length(2),
-    ])
-    .split(area);
-    frame.render_widget(Paragraph::new(title("Normal quit · Progress")), chunks[0]);
-    let mut lines = Vec::new();
-    if let Some(session) = &app.cleanup {
-        lines.push(Line::styled(
-            safe_text(session.progress()),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ));
-        lines.push(Line::from(format!(
-            "Frozen plan {} · rule revision {}",
-            safe_text(&session.plan().plan_id),
-            session.plan().rule_revision
-        )));
-        lines.push(Line::from(
-            "Each request rechecks the exact instance, installation, protection and frontmost state.",
-        ));
-        lines.push(Line::from(
-            "Observe for up to 15 s. Refusal or continued running never triggers force quit.",
-        ));
-        lines.push(Line::from(""));
-        for target in session.targets() {
-            lines.push(Line::styled(
-                format!("{} · {}", safe_text(&target.name), target.outcome.text()),
-                Style::default().add_modifier(Modifier::BOLD),
-            ));
-            lines.push(Line::from(format!(
-                "{} · {}",
-                if target.request_sent {
-                    "Request sent"
-                } else {
-                    "No request sent"
-                },
-                safe_text(&target.reason)
-            )));
-            lines.push(Line::from(""));
-        }
-    } else {
-        lines.push(Line::from("Execution ended. Esc returns Home."));
-    }
-    render_scrolled(frame, lines, chunks[1], &mut app.detail_scroll);
-    frame.render_widget(
-        Paragraph::new("Ctrl+C / Esc Cancel; stop further requests\nQ Cancel and quit · Actions are not replayed")
-            .style(Style::default().add_modifier(Modifier::DIM)),
-        chunks[2],
-    );
-}
-
-fn render_results(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let chunks = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(4),
-        Constraint::Length(2),
-    ])
-    .split(area);
-    frame.render_widget(Paragraph::new(title("Results")), chunks[0]);
-    let lines = app
-        .cleanup_result
-        .as_ref()
-        .map(result_lines)
-        .unwrap_or_else(|| {
-            vec![Line::from(
-                "No completed result. History can show unfinished runs.",
-            )]
-        });
-    render_scrolled(frame, lines, chunks[1], &mut app.detail_scroll);
-    frame.render_widget(
-        Paragraph::new("↑↓ / PgUp / PgDn Scroll\nEsc Home  S Settings  Q Quit")
-            .style(Style::default().add_modifier(Modifier::DIM)),
-        chunks[2],
-    );
-}
-
-fn history_status(status: &str) -> String {
-    match status {
-        "finished" => "Finished".into(),
-        "cancelled" => "Cancelled".into(),
-        "unfinished" => "Unfinished".into(),
-        other => safe_text(other),
-    }
-}
-
-fn render_history(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
-    let chunks = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(3),
-        Constraint::Min(3),
-        Constraint::Length(2),
-    ])
-    .split(area);
-    frame.render_widget(Paragraph::new(title("History · Recent runs")), chunks[0]);
-    let status = match &app.history_error {
-        Some(error) => format!(
-            "History read failed: {}\nCached records may be stale. R retries; actions are not replayed.",
-            safe_text(error)
-        ),
-        None => format!(
-            "{} runs · retained for 7 days, up to 10 MiB\nFinished and unfinished shown separately. Viewing never executes a run.",
-            app.history.len()
-        ),
-    };
-    frame.render_widget(Paragraph::new(status).wrap(Wrap { trim: false }), chunks[1]);
-    if app.history.is_empty() {
-        frame.render_widget(
-            Paragraph::new(if cleanup::enabled() {
-                "No cleanup runs yet. Rule and preview logs are not quit outcomes."
-            } else {
-                "No session records yet. Rule and preview logs are not quit outcomes."
-            })
-            .wrap(Wrap { trim: false }),
-            chunks[2],
-        );
-    } else {
-        let items: Vec<_> = app
-            .history
-            .iter()
-            .map(|item| {
-                ListItem::new(vec![
-                    Line::from(format!(
-                        "{} · {} · UTC ms {}",
-                        history_status(&item.status),
-                        if item.result.is_some() {
-                            "Result recorded"
-                        } else {
-                            "Unfinished / no final result"
-                        },
-                        item.timestamp_unix_ms
-                    )),
-                    Line::from(format!(
-                        "{} · {}",
-                        safe_text(&item.run_id),
-                        safe_text(&item.message)
-                    )),
-                ])
-            })
-            .collect();
-        frame.render_stateful_widget(
-            List::new(items)
-                .highlight_symbol(selection_marker())
-                .highlight_style(selection_style()),
-            chunks[2],
-            &mut app.history_selection,
-        );
-    }
-    frame.render_widget(
-        Paragraph::new("↑↓ Select  Enter Results  R Reload\nEsc Home  Q Quit · No replay")
-            .style(Style::default().add_modifier(Modifier::DIM)),
-        chunks[3],
-    );
-}
-
-fn render_history_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
-    let chunks = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(4),
-        Constraint::Length(2),
-    ])
-    .split(area);
-    frame.render_widget(Paragraph::new(title("Run details")), chunks[0]);
-    let mut lines = Vec::new();
-    if let Some(item) = app.history.iter().find(|item| item.run_id == id) {
-        lines.push(Line::styled(
-            format!(
-                "{} · UTC ms {}",
-                history_status(&item.status),
-                item.timestamp_unix_ms
-            ),
-            Style::default().fg(ACCENT),
-        ));
-        lines.push(Line::from(safe_text(&item.message)));
-        if let Some(result) = &item.result {
-            lines.extend(result_lines(result));
-        } else {
-            lines.push(Line::from(format!(
-                "Run {} has no final result.",
-                safe_text(&item.run_id)
-            )));
-            lines.push(Line::from(
-                "The final outcome of previously sent requests is unknown. Bree will not replay this run.",
-            ));
-        }
-    } else {
-        lines.push(Line::from(
-            "This run is no longer in recent history. Esc returns to the list.",
-        ));
-    }
-    if let Some(error) = &app.history_error {
-        lines.push(Line::styled(
-            format!("Read failed; cached records shown: {}", safe_text(error)),
-            Style::default().fg(ACCENT),
-        ));
-    }
-    render_scrolled(frame, lines, chunks[1], &mut app.detail_scroll);
-    frame.render_widget(
-        Paragraph::new(
-            "↑↓ / PgUp / PgDn Scroll  R Reload\nEsc History  Q Quit · View only, no replay",
-        )
-        .style(Style::default().add_modifier(Modifier::DIM)),
-        chunks[2],
-    );
-}
-
 fn render_confirmation(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let Some(confirmation) = &app.confirmation else {
         return;
@@ -1908,39 +1282,6 @@ fn render_confirmation(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
             ));
             " Remove selected rule ".into()
         }
-        RuleConfirmation::Exit {
-            name,
-            scope,
-            identity,
-            ..
-        } => {
-            lines.push(Line::from(format!("Application: {}", safe_text(name))));
-            lines.extend(scope_lines(scope));
-            lines.push(Line::from(format!(
-                "Exact instance: {}",
-                safe_text(&identity.object_id())
-            )));
-            lines.push(Line::from(format!(
-                "PID {} · started {} s + {} µs",
-                identity.pid,
-                identity
-                    .start_seconds
-                    .map_or_else(|| "unknown".into(), |value| value.to_string()),
-                identity
-                    .start_microseconds
-                    .map_or_else(|| "unknown".into(), |value| value.to_string())
-            )));
-            lines.push(Line::from(""));
-            lines.push(Line::from(
-                "Request normal quit once for this exact instance.",
-            ));
-            lines.push(Line::from("This one-time action adds no Allow rule."));
-            lines.push(Line::from("Refusal or timeout never triggers force quit."));
-            lines.push(Line::from(
-                "Recheck before execution; a replacement instance will be skipped.",
-            ));
-            " Confirm normal quit ".into()
-        }
     };
     let width = area.width.min(88);
     let height = area.height.min(18);
@@ -1960,12 +1301,8 @@ fn render_confirmation(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(2)]).split(inner);
     render_scrolled(frame, lines, chunks[0], &mut app.confirmation_scroll);
     frame.render_widget(
-        Paragraph::new(if matches!(confirmation, RuleConfirmation::Exit { .. }) {
-            "Enter Request quit  Esc Cancel\n↑↓ / PgDn Review installation and instance"
-        } else {
-            "Enter Save rule  Esc Cancel\n↑↓ / PgDn Review installation scope"
-        })
-        .style(Style::default().add_modifier(Modifier::BOLD)),
+        Paragraph::new("Enter Save rule  Esc Cancel\n↑↓ / PgDn Review installation scope")
+            .style(Style::default().add_modifier(Modifier::BOLD)),
         chunks[1],
     );
 }
@@ -2032,9 +1369,11 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
     );
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         frame.render_widget(
-            Paragraph::new(if app.cleanup.is_some() { "bree · Quit observation\nResize to at least 48 columns × 16 rows.\nCtrl+C Cancel  Q Cancel and quit" } else { "bree · Memory\nResize to at least 48 columns × 16 rows.\nQ or Ctrl+C Quit" })
-                .wrap(Wrap { trim: false })
-                .style(Style::default().fg(ACCENT)),
+            Paragraph::new(
+                "bree · Memory\nResize to at least 48 columns × 16 rows.\nQ or Ctrl+C Quit",
+            )
+            .wrap(Wrap { trim: false })
+            .style(Style::default().fg(ACCENT)),
             area,
         );
         return;
@@ -2047,10 +1386,6 @@ fn render(frame: &mut Frame<'_>, app: &mut App) {
         Page::Settings => render_settings(frame, app, inner),
         Page::RuleDetail(id) => render_rule_detail(frame, app, &id, inner),
         Page::Preview => render_preview(frame, app, inner),
-        Page::Executing => render_executing(frame, app, inner),
-        Page::Results => render_results(frame, app, inner),
-        Page::History => render_history(frame, app, inner),
-        Page::HistoryDetail(id) => render_history_detail(frame, app, &id, inner),
     }
     if app.confirmation.is_some() {
         render_confirmation(frame, app, inner);
@@ -2132,10 +1467,10 @@ fn render_home_content(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
     } else {
         5
     };
-    let footer_gap = u16::from(area.height > summary_height + 4 + 2);
+    let footer_gap = u16::from(area.height > summary_height + 3 + 2);
     let chunks = Layout::vertical([
         Constraint::Length(summary_height),
-        Constraint::Length(4),
+        Constraint::Length(3),
         Constraint::Length(footer_gap),
         Constraint::Length(2),
         Constraint::Min(0),
@@ -2149,25 +1484,17 @@ fn render_home_content(frame: &mut Frame<'_>, app: &mut App, area: Rect) {
         || "Analyzing".into(),
         |plan| format!("{} · See reasons", plan.pending_count),
     );
-    let automatic = app.plan.as_ref().map_or(0, |plan| plan.automatic_count);
     let entries = [
-        if !cleanup::enabled() {
-            "1. Preview       Rules & reasons".into()
-        } else if automatic == 0 {
-            "1. Clean         No automatic targets".into()
-        } else {
-            format!("1. Clean         {automatic} allowed instances")
-        },
+        "1. Preview       Rules & reasons".into(),
         format!("2. Needs review  {pending}"),
         "3. Memory        Grouped by application".into(),
-        "4. History       Completed / unfinished".into(),
     ];
     let list = List::new(entries.map(ListItem::new))
         .highlight_symbol(selection_marker())
         .highlight_style(selection_style());
     frame.render_stateful_widget(list, chunks[1], &mut app.menu);
     frame.render_widget(
-        Paragraph::new("↑↓ / 1–4 Select  Enter Open  R Refresh\nP Preview  S Settings  Q Quit")
+        Paragraph::new("↑↓ / 1–3 Select  Enter Open  R Refresh\nP Preview  S Settings  Q Quit")
             .style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)),
         chunks[3],
     );
@@ -2196,11 +1523,7 @@ fn summary(app: &App, compact: bool) -> Text<'static> {
         } else {
             format!(
                 "Analyzing…\nReading real memory data; {}.",
-                if cleanup::enabled() {
-                    "cleanup requires explicitly allowed apps"
-                } else {
-                    "normal quit is disabled"
-                }
+                "normal quit is disabled"
             )
         };
         return Text::from(message);
@@ -2600,11 +1923,7 @@ fn process_detail(process: &ProcessInfo) -> Vec<Line<'static>> {
         lines.push(Line::from("The label explains attribution, not task completion or permission to stop automatically."));
     }
     lines.push(Line::from(
-        if cleanup::enabled() && process.quit_supported {
-            "Actions: normal quit for a main application after identity and protection checks. Ports: unverified."
-        } else {
-            "Actions: read-only; normal quit is disabled for this instance. Ports: unverified."
-        },
+        "Actions: read-only; normal quit is disabled for this instance. Ports: unverified.",
     ));
     lines.push(Line::from(""));
     lines
@@ -2695,11 +2014,9 @@ fn render_detail(frame: &mut Frame<'_>, app: &mut App, id: &str, area: Rect) {
     app.detail_scroll = app.detail_scroll.min(max_scroll);
     frame.render_widget(paragraph.scroll((app.detail_scroll, 0)), chunks[1]);
     frame.render_widget(
-        Paragraph::new(if cleanup::enabled() {
-            "A Allow  P Protect  E Quit  ↑↓/PgDn Scroll\nR Refresh  S Settings  Esc Back  Q Quit"
-        } else {
-            "A Allow  P Protect  ↑↓/PgDn Scroll\nR Refresh  S Settings  Esc Back  Q Quit"
-        })
+        Paragraph::new(
+            "A Allow  P Protect  ↑↓/PgDn Scroll\nR Refresh  S Settings  Esc Back  Q Quit",
+        )
         .style(Style::default().fg(MUTED).add_modifier(Modifier::DIM)),
         chunks[2],
     );
@@ -2865,7 +2182,7 @@ mod tests {
             InputResult::Continue
         ));
         assert_eq!(app.page, Page::Preview);
-        assert!(app.cleanup.is_none());
+
         assert!(app.confirmation.is_none());
         assert!(app.notice.is_none());
         app.handle(key(KeyCode::Esc));
@@ -3122,7 +2439,6 @@ mod tests {
                 "1. Preview       Rules & reasons",
                 "2. Needs review",
                 "> 3. Memory",
-                "4. History",
                 "S Settings",
                 "Q Quit",
             ] {
@@ -3215,7 +2531,6 @@ mod tests {
                     "1. Preview",
                     "2. Needs review",
                     "> 3. Memory",
-                    "4. History",
                     "R Refresh",
                     "S Settings",
                     "Q Quit",
@@ -3317,16 +2632,12 @@ mod tests {
                     .iter()
                     .position(|line| line.starts_with("  > 3. Memory"))
                     .expect("selection marker stays on the left baseline");
-                let history = lines
-                    .iter()
-                    .position(|line| line.trim_start().starts_with("4. History"))
-                    .expect("fourth entry remains visible");
                 let footer = lines
                     .iter()
-                    .position(|line| line.starts_with("  ↑↓ / 1–4 Select"))
+                    .position(|line| line.starts_with("  ↑↓ / 1–3 Select"))
                     .expect("navigation stays on the left baseline");
-                assert!(summary < menu && menu < history && history < footer);
-                assert!(footer - history <= 2, "navigation follows the menu: {text}");
+                assert!(summary < menu && menu < footer);
+                assert!(footer - menu <= 2, "navigation follows the menu: {text}");
                 if depth != ColorDepth::None && width >= 60 && height >= 26 {
                     assert!(summary > brand::HEIGHT as usize);
                 }
@@ -3361,7 +2672,6 @@ mod tests {
             "1. Preview",
             "2. Needs review",
             "> 3. Memory",
-            "4. History",
             "R Refresh",
             "S Settings",
             "Q Quit",
@@ -3394,9 +2704,6 @@ mod tests {
             Page::Detail(detail),
             Page::RuleDetail("missing".into()),
             Page::Preview,
-            Page::Results,
-            Page::History,
-            Page::HistoryDetail("missing".into()),
         ] {
             app.page = page.clone();
             let (text, terminal) = screen(&mut app, 48, 16);
@@ -3441,7 +2748,7 @@ mod tests {
         assert_eq!(app.search_editor.as_ref().unwrap().draft, "qrsa");
         assert_eq!(app.groups().len(), 1);
         assert_eq!(app.selected_group, selected);
-        assert!(app.cleanup.is_none() && app.confirmation.is_none());
+        assert!(app.confirmation.is_none());
         app.handle(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
         input(&mut app, "  中文应用字  ");
         app.handle(key(KeyCode::Backspace));
@@ -3633,7 +2940,7 @@ mod tests {
             app.snapshot.as_ref().unwrap().processes[0].id,
             old_process_id
         );
-        assert!(app.cleanup.is_none() && app.confirmation.is_none());
+        assert!(app.confirmation.is_none());
     }
 
     #[test]
@@ -4003,59 +3310,15 @@ mod tests {
         assert!(text.contains("sample unavailable"));
     }
 
-    fn cleanup_result() -> CleanupResult {
-        use crate::cleanup::{Outcome, TargetResult};
-        let sample = snapshot();
-        let targets = [
-            Outcome::Exited,
-            Outcome::StillRunning,
-            Outcome::RequestRefused,
-            Outcome::Skipped,
-            Outcome::Cancelled,
-            Outcome::Unknown,
-        ]
-        .into_iter()
-        .enumerate()
-        .map(|(index, outcome)| TargetResult {
-            group_id: format!("group-{index}"),
-            name: format!("测试应用 {index}"),
-            identity: Some(sample.processes[0].identity.clone()),
-            outcome,
-            reason: format!("Test reason {index}"),
-            request_sent: index < 3,
-            observed_ms: if outcome == Outcome::StillRunning {
-                15_000
-            } else {
-                20
-            },
-        })
-        .collect();
-        CleanupResult {
-            schema_version: 1,
-            run_id: "run:test".into(),
-            plan_id: "plan:test".into(),
-            rule_revision: 2,
-            started_at_unix_ms: 1_000,
-            finished_at_unix_ms: 20_000,
-            cancelled: false,
-            targets,
-            resource_before: sample.system.clone(),
-            resource_after: Some(sample.system),
-            resource_observation:
-                "Test observation: memory did not decrease and pressure did not improve.".into(),
-            errors: Vec::new(),
-        }
-    }
-
     #[test]
-    fn home_preview_records_only_a_read_only_plan_without_starting_a_session() {
+    fn home_preview_records_only_a_read_only_plan() {
         let store = TestStore::new();
         let mut app = store.app();
         app.received(Ok(scoped_snapshot("Fixture")));
         assert_eq!(app.plan.as_ref().unwrap().automatic_count, 0);
         app.handle(key(KeyCode::Char('1')));
         app.handle(key(KeyCode::Enter));
-        assert!(app.cleanup.is_none());
+
         assert!(app.confirmation.is_none());
         assert_eq!(app.page, Page::Preview);
         assert!(app.preview_plan.as_ref().unwrap().read_only);
@@ -4063,36 +3326,6 @@ mod tests {
         assert_eq!(prepared_record_count(&store.0), 1);
         let journal = std::fs::read_to_string(store.0.root().join("journal.jsonl")).unwrap();
         assert_eq!(journal.lines().count(), 1);
-        assert!(history::load(&store.0, 50).unwrap().is_empty());
-    }
-
-    #[test]
-    fn disabled_detail_quit_is_hidden_and_only_shows_a_notice_without_writing_records() {
-        let store = TestStore::new();
-        let mut app = store.app();
-        let sample = scoped_snapshot("Fixture");
-        let id = sample.groups[0].id.clone();
-        app.received(Ok(sample));
-        app.page = Page::Detail(id);
-        for (width, height) in [(48, 16), (100, 30)] {
-            let (text, _) = screen(&mut app, width, height);
-            assert!(text.contains("A Allow  P Protect  ↑↓/PgDn Scroll"));
-            assert!(!text.contains("E Quit"));
-            assert!(!text.contains("E Disabled"));
-        }
-        for shortcut in ['e', 'E'] {
-            app.handle(key(KeyCode::Char(shortcut)));
-            assert!(
-                app.notice
-                    .as_deref()
-                    .unwrap()
-                    .contains("Normal quit is disabled")
-            );
-            assert!(app.confirmation.is_none());
-            assert!(app.cleanup.is_none());
-            app.handle(key(KeyCode::Enter)); // Dismiss the notice, without confirming an action.
-        }
-        assert!(!store.0.root().exists());
     }
 
     #[test]
@@ -4117,310 +3350,5 @@ mod tests {
             ),
             "— / Exited"
         );
-    }
-
-    #[test]
-    fn manual_exit_confirmation_freezes_scope_and_instance_without_saving_a_rule() {
-        let store = TestStore::new();
-        let mut app = store.app();
-        let sample = scoped_snapshot("Fixture");
-        let scope = scope_for_group(&sample, &sample.groups[0].id).unwrap();
-        let identity = sample.processes[0].identity.clone();
-        app.confirmation = Some(RuleConfirmation::Exit {
-            group_id: sample.groups[0].id.clone(),
-            name: "测试应用".into(),
-            scope,
-            identity,
-            snapshot: Box::new(sample),
-        });
-        let mut replacement = scoped_snapshot("Fixture");
-        replacement.processes[0].identity.start_microseconds = Some(99);
-        replacement.processes[0].id = replacement.processes[0].identity.object_id();
-        replacement.groups[0].id = format!("app:{}", replacement.processes[0].id);
-        replacement.groups[0].process_ids = vec![replacement.processes[0].id.clone()];
-        app.received(Ok(replacement));
-        match app.confirmation.as_ref().unwrap() {
-            RuleConfirmation::Exit {
-                identity, snapshot, ..
-            } => {
-                assert_eq!(identity.start_microseconds, Some(5));
-                assert_eq!(snapshot.processes[0].identity.start_microseconds, Some(5));
-            }
-            _ => panic!("single-instance consent must keep its frozen snapshot"),
-        }
-        let (text, terminal) = screen(&mut app, 110, 36);
-        assert!(text.contains("Confirm normal quit"));
-        assert!(text.contains("PID 123"));
-        assert!(text.contains("10 s + 5 µs"));
-        assert!(text.contains("adds no Allow rule"));
-        assert!(text.contains("replacement instance will be skipped"));
-        assert!(
-            terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .all(|cell| cell.bg == Color::Reset)
-        );
-        app.handle(key(KeyCode::Esc));
-        assert!(app.confirmation.is_none());
-        assert!(app.cleanup.is_none());
-        assert!(store.0.load().unwrap().rules.is_empty());
-        assert!(!store.0.root().exists());
-    }
-
-    #[test]
-    fn cleanup_results_separate_all_exit_outcomes_from_unchanged_or_missing_resources() {
-        use crate::cleanup::Outcome;
-        let mut app = App::new(false);
-        app.page = Page::Results;
-        app.cleanup_result = Some(cleanup_result());
-        let (text, terminal) = screen(&mut app, 150, 65);
-        assert!(text.contains("Application quit outcomes"));
-        assert!(text.contains("System resource observations"));
-        for outcome in [
-            Outcome::Exited,
-            Outcome::StillRunning,
-            Outcome::RequestRefused,
-            Outcome::Skipped,
-            Outcome::Cancelled,
-            Outcome::Unknown,
-        ] {
-            assert!(text.contains(outcome.text()));
-        }
-        assert!(text.contains("memory did not decrease and pressure did not improve"));
-        assert!(text.contains("No improvement is a valid result"));
-        assert!(
-            terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .all(|cell| cell.bg == Color::Reset)
-        );
-        app.cleanup_result.as_mut().unwrap().resource_after = None;
-        let (text, _) = screen(&mut app, 150, 65);
-        assert!(text.contains("no resource sample; improvement cannot be assessed"));
-        app.handle(key(KeyCode::Esc));
-        assert_eq!(app.page, Page::Home);
-        assert!(app.cleanup.is_none());
-    }
-
-    #[test]
-    fn history_views_finished_and_unfinished_runs_without_replaying_or_creating_files() {
-        let store = TestStore::new();
-        let mut app = store.app();
-        app.handle(key(KeyCode::Char('4')));
-        app.handle(key(KeyCode::Enter));
-        assert_eq!(app.page, Page::History);
-        assert!(app.history.is_empty());
-        let (text, _) = screen(&mut app, 100, 30);
-        assert!(text.contains("No session records yet."));
-        assert!(!text.contains("No cleanup runs yet."));
-        assert!(!store.0.root().exists());
-        store
-            .0
-            .append_record(
-                "cleanup_finished",
-                serde_json::to_value(cleanup_result()).unwrap(),
-            )
-            .unwrap();
-        store
-            .0
-            .append_record(
-                "cleanup_started",
-                serde_json::json!({"run_id":"run:unfinished", "target_count": 1}),
-            )
-            .unwrap();
-        let original = std::fs::read(store.0.root().join("journal.jsonl")).unwrap();
-        app.handle(key(KeyCode::Char('r')));
-        assert_eq!(app.history.len(), 2);
-        let (text, _) = screen(&mut app, 120, 30);
-        assert!(text.contains("Finished"));
-        assert!(text.contains("Unfinished / no final result"));
-        let unfinished = app
-            .history
-            .iter()
-            .position(|item| item.result.is_none())
-            .unwrap();
-        app.history_selection.select(Some(unfinished));
-        app.handle(key(KeyCode::Enter));
-        let (text, _) = screen(&mut app, 120, 32);
-        assert!(text.contains("has no final result"));
-        assert!(text.contains("Bree will not replay"));
-        app.handle(key(KeyCode::Esc));
-        let finished = app
-            .history
-            .iter()
-            .position(|item| item.result.is_some())
-            .unwrap();
-        app.history_selection.select(Some(finished));
-        app.handle(key(KeyCode::Enter));
-        let (text, _) = screen(&mut app, 150, 65);
-        assert!(text.contains("Application quit outcomes"));
-        assert!(text.contains("System resource observations"));
-        assert!(app.cleanup.is_none());
-        assert_eq!(
-            std::fs::read(store.0.root().join("journal.jsonl")).unwrap(),
-            original
-        );
-    }
-
-    #[test]
-    fn clean_command_waiting_intent_is_cancelled_by_navigation_or_failed_sampling() {
-        for code in [KeyCode::Esc, KeyCode::Char('p'), KeyCode::Char('s')] {
-            let store = TestStore::new();
-            let mut app = store.app();
-            app.start_cleanup_after_sample = true;
-            app.handle(key(code));
-            assert!(!app.start_cleanup_after_sample);
-            assert!(app.cleanup.is_none());
-            assert!(!store.0.root().exists());
-        }
-        let store = TestStore::new();
-        let mut app = store.app();
-        app.start_cleanup_after_sample = true;
-        app.received(Err("test sampling failure".into()));
-        assert!(!app.start_cleanup_after_sample);
-        assert!(app.cleanup.is_none());
-        assert!(
-            app.notice
-                .as_deref()
-                .unwrap()
-                .contains("Cleanup not started")
-        );
-        assert!(!store.0.root().exists());
-    }
-
-    #[test]
-    fn running_cleanup_blocks_navigation_and_shows_per_instance_request_state() {
-        let mut app = App::new(false);
-        app.cleanup = Some(Session::test_running());
-        app.page = Page::Executing;
-        let (text, terminal) = screen(&mut app, 120, 36);
-        assert!(text.contains("Request sent"));
-        assert!(text.contains("Not yet verified"));
-        assert!(text.contains("Refusal or continued running never triggers force quit"));
-        assert!(
-            terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .all(|cell| cell.bg == Color::Reset)
-        );
-        for code in [
-            KeyCode::Char('s'),
-            KeyCode::Char('r'),
-            KeyCode::Char('p'),
-            KeyCode::Enter,
-        ] {
-            assert!(matches!(app.handle(key(code)), InputResult::Continue));
-            assert_eq!(app.page, Page::Executing);
-            assert!(app.cleanup.is_some());
-        }
-        app.cancel_cleanup();
-        assert_eq!(app.page, Page::Results);
-    }
-
-    #[test]
-    fn control_c_escape_and_q_cancel_the_session_before_leaving_execution() {
-        for key_event in [
-            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-            key(KeyCode::Esc),
-            key(KeyCode::Char('q')),
-        ] {
-            let mut app = App::new(false);
-            app.cleanup = Some(Session::test_running());
-            app.page = Page::Executing;
-            let exit = app.handle(key_event);
-            if key_event.code == KeyCode::Char('q') {
-                assert!(matches!(exit, InputResult::Quit(false)));
-            } else {
-                assert!(matches!(exit, InputResult::Continue));
-            }
-            assert!(app.cleanup.is_none());
-            assert_eq!(app.page, Page::Results);
-            let result = app.cleanup_result.as_ref().unwrap();
-            assert!(result.cancelled);
-            assert_eq!(result.targets.len(), 1);
-            assert!(result.targets[0].request_sent);
-            assert_eq!(result.targets[0].outcome, crate::cleanup::Outcome::Unknown);
-            let (text, _) = screen(&mut app, 120, 40);
-            assert!(text.contains("Cancelled"));
-            assert!(text.contains("Not yet verified"));
-        }
-    }
-
-    #[test]
-    fn history_read_failure_keeps_visible_cache_and_does_not_replay_actions() {
-        let store = TestStore::new();
-        store
-            .0
-            .append_record(
-                "cleanup_finished",
-                serde_json::to_value(cleanup_result()).unwrap(),
-            )
-            .unwrap();
-        let mut app = store.app();
-        app.open_history();
-        assert_eq!(app.history.len(), 1);
-        std::fs::write(store.0.root().join("journal.jsonl"), b"corrupt journal").unwrap();
-        app.handle(key(KeyCode::Char('r')));
-        assert!(app.history_error.is_some());
-        assert_eq!(app.history.len(), 1);
-        let (text, _) = screen(&mut app, 120, 32);
-        assert!(text.contains("History read failed"));
-        assert!(text.contains("Cached records may be stale"));
-        assert!(app.cleanup.is_none());
-        assert_eq!(
-            std::fs::read(store.0.root().join("journal.jsonl")).unwrap(),
-            b"corrupt journal"
-        );
-    }
-
-    #[test]
-    fn clean_waiting_intent_is_retired_by_menu_navigation_even_when_returning_home() {
-        for choice in ['2', '3', '4'] {
-            for return_home in [false, true] {
-                let store = TestStore::new();
-                let mut app = store.app();
-                app.loading = true;
-                app.start_cleanup_after_sample = true;
-                app.handle(key(KeyCode::Char(choice)));
-                app.handle(key(KeyCode::Enter));
-                assert!(
-                    !app.start_cleanup_after_sample,
-                    "menu {choice} must retire waiting clean"
-                );
-                let expected_page = if return_home {
-                    app.handle(key(KeyCode::Esc));
-                    Page::Home
-                } else if choice == '4' {
-                    Page::History
-                } else {
-                    Page::Resources
-                };
-                assert_eq!(app.page, expected_page);
-                app.received(Ok(scoped_snapshot("Fixture")));
-                assert_eq!(
-                    app.page, expected_page,
-                    "late result cannot force execution"
-                );
-                assert!(app.cleanup.is_none());
-                assert!(app.cleanup_result.is_none());
-                assert!(
-                    app.notice.is_none(),
-                    "late result must not attempt Session::start"
-                );
-                assert!(
-                    !store.0.root().exists(),
-                    "inspection navigation creates no execution record"
-                );
-                let records = std::fs::read_to_string(store.0.root().join("journal.jsonl"))
-                    .unwrap_or_default();
-                assert!(!records.contains("cleanup_started"));
-            }
-        }
     }
 }

@@ -26,7 +26,7 @@
 
 Bree brings system memory pressure, application usage, and process details into a terminal interface you can navigate with your keyboard. Find what is using memory, inspect the evidence behind each application's grouping and metrics, or follow changes with direct commands and JSON output.
 
-**Current version: `0.3.0-alpha.7`. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. Application quitting is disabled: this version does not stop applications. Rules and previews explain how each application is classified; the `clean` command only records previews and zero-request sessions.**
+**Current version: `0.3.0-alpha.7`. Tested on native Apple Silicon with macOS 27.0.1; other configurations remain unverified. Bree does not stop applications. Rules and previews explain how each application is classified; `clean --dry-run` records a preview without taking action.**
 
 <!-- screenshot: TUI Home and Resources -->
 
@@ -72,7 +72,7 @@ See the [installation guide](docs/installation.md) for updates, uninstalling, cu
 | Which application or process is using memory? | Application groups supported by evidence, process details, and search by name, bundle ID, or PID |
 | Which AI or developer tool does a process belong to? | Labels for ChatGPT.app's bundled Codex CLI and native Claude Code, matched by [documented executable layouts](docs/cli.md#development-labels) without a pinned version; labels explain installation source, not task completion or whether memory can be safely reclaimed |
 | Is usage still changing? | Foreground monitoring and text, JSON, or JSONL output |
-| Why is an item protected or skipped? | Allow and protect rules, classification reasons, read-only previews, and session history |
+| Why is an item protected or skipped? | Allow and protect rules, classification reasons, and read-only previews |
 
 Missing or inaccessible data is explicitly marked instead of being reported as zero.
 
@@ -91,7 +91,6 @@ bree inspect '<object ID>'    # Inspect an ID returned by list
 bree watch                   # Monitor in the foreground
 bree doctor                  # Check capabilities and data availability
 bree clean --dry-run --json   # Preview without taking action
-bree history --json           # Read session history
 bree license                  # Display the GPL-3.0 license
 ```
 

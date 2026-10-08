@@ -23,7 +23,7 @@ from check_env import bree_environment
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECKS = ("fmt", "clippy", "rust-tests", "script-tests", "build", "doctor",
-          "benchmark", "terminal", "theme", "signal", "history", "soak", "visual")
+          "benchmark", "terminal", "theme", "signal", "soak", "visual")
 
 
 def utc_now():
@@ -246,7 +246,7 @@ def main():
         "limits": ["one live Mac and OS; workload/cache uncontrolled",
                    "PTY results do not establish physical terminal visual quality",
                    "local build does not verify released Homebrew/curl/signing combinations",
-                   "A1 remains disabled; no ordinary application quit was tested"],
+                   "Bree only inspects applications; no quit requests are supported"],
     }
     summary_path = output / "summary.json"
 
@@ -301,7 +301,6 @@ def main():
                 ("terminal", "terminal-check.py", ["--runs", str(args.runs)], 300),
                 ("theme", "theme-check.py", [], 300),
                 ("signal", "signal-check.py", ["--repeat", "20"], 180),
-                ("history", "history-benchmark.py", ["--runs", str(args.runs)], 300),
                 ("soak", "soak.py", [], 780),
             ):
                 if digest(binary) != report["binary"]["sha256"] or source_manifest()["sha256"] != manifest["sha256"]:

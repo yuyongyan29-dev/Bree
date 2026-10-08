@@ -9,14 +9,7 @@ pub fn prepare(store: &Store, snapshot: &Snapshot) -> Result<CleanupPlan, String
     let _execution = store.execution_lock()?;
     // Read under the execution lane rather than reusing a possibly old UI state.
     let state = store.load()?;
-    let plan = evaluate(
-        snapshot,
-        &state,
-        &PolicyContext {
-            state_valid: true,
-            a1_enabled: false,
-        },
-    );
+    let plan = evaluate(snapshot, &state, &PolicyContext { state_valid: true });
     store.append_record(
         "dry_run_prepared",
         serde_json::json!({

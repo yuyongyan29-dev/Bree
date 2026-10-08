@@ -4,7 +4,7 @@
 
 ## 项目定位与事实来源
 
-- Bree 是轻量的 macOS 本机内存查看工具，使用 Rust 实现 CLI 与键盘 TUI；规则、清理预演和处理记录也属于当前范围。AI／开发工具标签用于解释归属，不代表任务已完成或可以安全回收。
+- Bree 是轻量的 macOS 本机内存查看工具，使用 Rust 实现 CLI 与键盘 TUI；规则和只读预演也属于当前范围。AI／开发工具标签用于解释归属，不代表任务已完成或可以安全回收。
 - 当前仓库是独立 CLI。不要因其他产品形态引入 Web 前端、本地 HTTP 服务、默认常驻进程或运行时语言环境。普通命令完成后退出，持续观察由资源页与显式 `watch` 承担。
 - 实际行为先查看实现和测试，再核对 [使用说明](docs/cli.md)。安装与兼容范围查看 [安装说明](docs/installation.md)，开发流程查看 [贡献指南](CONTRIBUTING.md)。历史设计不能证明功能已经实现或平台已经验证。
 - 工具链以 [rust-toolchain.toml](rust-toolchain.toml) 为准；包版本、依赖与锁定结果分别以 [Cargo.toml](Cargo.toml)、[Cargo.lock](Cargo.lock) 为准。不要把本机或 CI 测试通过扩大为所有 macOS 版本受支持。
@@ -20,23 +20,20 @@
 | 数据模型、指标有效性、实例身份 | `src/model.rs` |
 | 采集、分组与开发工具归属 | `src/collect.rs`、`src/attribution.rs`、`src/platform/macos.rs` |
 | 搜索与排序、文本和 JSON 导出 | `src/query.rs`、`src/output.rs` |
-| 规则、预演、处理会话与原生退出适配 | `src/policy.rs`、`src/preview.rs`、`src/cleanup.rs`、`src/platform/actions_macos.rs` |
-| 本地状态、锁、日志与历史 | `src/storage.rs`、`src/history.rs` |
-| 集成验证、原生退出实验 | `tests/`、`scripts/`、`examples/quit_probe.rs` |
+| 规则与预演 | `src/policy.rs`、`src/preview.rs` |
+| 本地状态、锁与摘要 | `src/storage.rs` |
+| 集成验证 | `tests/`、`scripts/` |
 | 安装、打包与依赖许可声明 | `distribution/`、`.github/workflows/ci.yml` |
 
-CLI 与 TUI 共用采集、查询、规则和会话逻辑；修复共同问题时改共享模块，避免各自维护一套行为。macOS 专属能力留在平台适配层，AppKit 控制对象保留在主线程，不传入采样工作线程。
+CLI 与 TUI 共用采集、查询、规则和预演逻辑；修复共同问题时改共享模块，避免各自维护一套行为。macOS 专属能力留在平台适配层，AppKit 控制对象保留在主线程，不传入采样工作线程。
 
 ## 不可绕过的行为边界
 
 ### 退出与清理
 
-- **当前 A1（应用正常退出）能力硬关闭**：`src/cleanup.rs` 的 `enabled()` 返回 `false`。允许规则、`--yes`、环境变量或新 UI 入口都不能绕过能力检查。普通功能改动不得顺带启用它。
-- 如任务涉及启用退出能力，按 `CONTRIBUTING.md` 提供精确实例控制、前台保护、文档保存、取消、记录失败与重启路径的原生验证证据；假 backend 测试不构成原生能力证明，能力不可靠时保持只读。
+- Bree 不支持结束应用。规则与预演不发送退出请求，不引入强制结束、后台自动清理或用户文件清理。
 - 保护规则优先于允许规则。规则绑定确切 bundle ID、应用安装路径与主可执行路径；不得扩大为名称、通配符、PID 或整棵子进程树。系统、前台、身份缺失、归属冲突、未知 helper 和 AI 开发工具继续遵循现有保护规则。
-- 对象 ID 只描述当前实例，不是可跨启动复用的停止凭据。执行前重验实例、规则与前台状态；冻结对象失效后跳过，不重新绑定复用的 PID，不追杀重启的新实例。
-- 不引入强制结束兜底、后台自动清理或用户文件清理。拒绝、超时、取消、未知与实际退出分别记录；请求被接受不等于退出成功，RSS 下降不等于可归因的释放量。
-- 保持单执行者、必要日志写入与取消检查。历史读取不得重放请求；缺少结束记录时保留 `unfinished`，零请求批次不得伪造操作后指标或回收成果。
+- 对象 ID 只描述当前实例，不是可跨启动复用的停止凭据。
 
 ### 指标、查询与输出
 
@@ -49,9 +46,9 @@ CLI 与 TUI 共用采集、查询、规则和会话逻辑；修复共同问题�
 
 ### 存储与终端
 
-- 普通查看、`history`、`doctor` 不创建数据文件；预演不发送退出请求，但会写入摘要，不能把 `--dry-run` 当作零磁盘写入。
+- 普通查看、`doctor` 不创建数据文件；预演不发送退出请求，但会写入摘要，不能把 `--dry-run` 当作零磁盘写入。
 - 保持私有目录／文件权限、状态原子更新、并发锁与日志容量限制。配置损坏、未知版本或权限不安全时保留原文件，关闭依赖规则的操作，不重置为空配置；普通内存查看仍可继续。
-- 手动验证涉及规则、预演或会话时，使用独立的绝对路径 `BREE_DATA_DIR`，避免修改真实用户数据。例如：
+- 手动验证涉及规则或预演时，使用独立的绝对路径 `BREE_DATA_DIR`，避免修改真实用户数据。例如：
 
   ```sh
   BREE_DATA_DIR="$PWD/.artifacts/dev-data" ./target/release/bree
@@ -77,7 +74,6 @@ cargo test --locked
 - 新增或修改的测试不依赖开发者终端（`TERM`、`COLORTERM`、`NO_COLOR`）或真实数据目录：启动子进程时显式设置这些变量与独立的 `BREE_DATA_DIR`，单元测试在代码中固定相关配置。否则可能出现本机失败而 CI 通过（或相反）的结果。
 - TUI 输入、主题或终端生命周期改动：按影响选用 `scripts/terminal-check.py`、`scripts/theme-check.py`、`scripts/signal-check.py`，结合 `tests/tui_signals.rs`；PTY 测试不能代替真实终端的视觉检查。
 - 采集或刷新性能改动：使用 `tests/collection_live.rs`、`tests/cpu_load.rs` 及相应的 benchmark／soak 脚本，记录平台与实际测量结果。先阅读脚本参数与副作用，再运行。
-- 原生退出实验只操作本次自建的 `tests/fixtures/QuitFixture.swift` 应用，入口是 `scripts/probe-quit.zsh`；不拿用户正在使用的应用做隐式测试目标。
 - 安装器或发行工具改动增加以下检查，安装器测试使用模拟下载：
 
   ```sh

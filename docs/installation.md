@@ -15,7 +15,7 @@ Bree 免费提供，提供 Homebrew 和 curl 两个安装入口。两者使用�
 
 在 Apple Silicon Mac 上请使用原生终端。curl 安装器会拒绝 Rosetta 的 x86_64 环境。安装与升级需要访问 GitHub，Bree 日常查看本机资源无需联网。
 
-当前 Alpha 的应用正常退出能力保持关闭，实际程序不会结束应用。发行程序仅有 ad-hoc 签名，尚未完成 Developer ID 签名、公证或干净账号安装验证；安装器不会自动移除 quarantine 或绕过系统校验。
+Bree 不会结束应用。发行程序仅有 ad-hoc 签名，尚未完成 Developer ID 签名、公证或干净账号安装验证；安装器不会自动移除 quarantine 或绕过系统校验。
 
 ## Homebrew 安装
 
@@ -96,7 +96,7 @@ curl -fsSL https://raw.githubusercontent.com/yuyongyan29-dev/Bree/main/distribut
 rm "$HOME/.local/bin/bree"
 ```
 
-Homebrew 与 curl 都保留本地规则和记录，默认位于 `~/Library/Application Support/Bree`。普通查看不会创建这些文件，首次保存规则／预演／处理会话才初始化数据目录。
+Homebrew 与 curl 都保留本地规则和记录，默认位于 `~/Library/Application Support/Bree`。普通查看不会创建这些文件，首次保存规则／预演才初始化数据目录。
 
 ## 检查安装
 
