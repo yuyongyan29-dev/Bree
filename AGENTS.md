@@ -31,7 +31,7 @@ CLI 与 TUI 共用采集、查询和输出逻辑；修复共同问题时改共�
 
 - 未知、无权限、不支持、失效与真实零值分开处理，保留 `Metric` 的 `value/status/reason`。内部使用字节，文本使用 MiB／GiB；进程统一使用 RSS，不把分组总量当作系统已用或可回收内存。
 - 每个进程只属于一个分组；归属冲突与未知对象明确保留。不依据名称或高内存占用推断某个 AI 任务已完成。CPU 首次采样只建基线，后续使用实际时间差。
-- 只有 AppKit 激活策略为 Regular 的普通应用能作为分组主应用；嵌套在其 bundle 内的 helper 应用并入该应用，菜单栏、后台应用及归属冲突进程保持未归属，但按同一可执行路径与同一 UID 聚合展示；路径不可读时按同名与同一 UID 聚合，UID 不可读时保留独立实例。无应用归属的分组优先使用可靠开发工具标签，原生 Claude Code 名称附带安装路径中的版本。开发工具标签按安装布局匹配，不锁定单个版本号；具体规则见 [使用说明](docs/cli.zh-CN.md)。
+- 只有 AppKit 激活策略为 Regular 的普通应用能作为分组主应用；菜单栏、后台应用及归属冲突进程保持未归属。开发工具标签按安装布局匹配，不锁定单个版本号。helper 并入、未归属聚合与标签命名的具体规则见 [使用说明](docs/cli.zh-CN.md)。
 - 搜索和排序使用共享 `src/query.rs`。搜索仅改变显示结果，不改变分类；`list` 的 `groups` 可筛选和截断，`processes`、`coverage` 保留完整样本。
 - 保持 JSON schema 2、有效性字段和退出码契约；不静默改变现有字段含义。stdout 只输出结果，诊断写 stderr，`watch --json` 保持 JSONL。变更对应检查在 `tests/cli_contract.rs`。
 - 文本采样时间使用 `libc::localtime_r` 转换为本地 `HH:MM:SS`，JSON 保留 `sampled_at_unix_ms`。指标来源集中记录在 `docs/cli.zh-CN.md`；内存公式仅在 doctor 文本和 JSON notes 中解释，JSON `system.used_definition` 保留。
